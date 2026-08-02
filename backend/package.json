@@ -1,0 +1,26 @@
+{
+  "name": "escrow-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "demo:claim": "tsx demo/demo.ts claim",
+    "demo:reclaim": "tsx demo/demo.ts reclaim",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^16.2.0",
+    "better-sqlite3": "^13.0.2",
+    "dotenv": "^16.4.5",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.23.4",
+    "typescript": "^5.7.2"
+  }
+}
