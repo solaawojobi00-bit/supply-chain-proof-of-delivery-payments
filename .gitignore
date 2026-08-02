@@ -15,10 +15,13 @@ npm-debug.log*
 
 # Rust / Soroban
 target/
+test_snapshots/
 
 # Backend data
 backend/data/*.sqlite
 backend/data/*.sqlite-journal
+backend/data/*.sqlite-wal
+backend/data/*.sqlite-shm
 
 # OS
 .DS_Store
