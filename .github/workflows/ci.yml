@@ -69,6 +69,10 @@ jobs:
       - name: Install cargo-audit
         uses: taiki-e/install-action@cargo-audit
 
+      - name: Run dependency audit test harness
+        run: node --test scripts/test-audit-deps.mjs
+
       - name: Run dependency audit gate
         run: node scripts/audit-deps.mjs
+
 
