@@ -13,6 +13,10 @@ import type { OrderRow } from "./db.js";
 
 export const router = Router();
 
+router.get("/health", (_req: Request, res: Response) => {
+  res.json({ status: "ok" });
+});
+
 function serialize(order: OrderRow) {
   return {
     id: order.id,
