@@ -15,7 +15,8 @@ contract, and why Claimable Balances don't fit this use case).
 
 Phase 1 is a genuinely working, end-to-end flow, run against real Stellar
 testnet (not mocked): create an order, attest delivery, seller claims — along
-with deadline-based buyer reclaim, and mutual buyer/seller order cancellation. See the
+with deadline-based buyer reclaim, mutual buyer/seller order cancellation, and
+dispute arbitration for contested attestations. See the
 [Phase 2+ backlog](#phase-2-backlog) for what's deliberately deferred.
 
 ## Repo layout
@@ -121,15 +122,17 @@ The escrow smart contracts and REST API accept any Stellar Asset Contract (SAC) 
 
 A complete machine-readable OpenAPI 3.0 specification is available at [`backend/openapi.yaml`](backend/openapi.yaml).
 
-| Endpoint                   | Effect                                                                                                                                             |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /orders`             | Create an order: `{ sellerAddress, attestorAddress?, attestors?: string[], threshold?: number, amountStroops, deadlineSeconds, tokenContractId? }` |
-| `GET /orders`              | List all orders                                                                                                                                    |
-| `GET /orders/:id`          | Order status, including a live on-chain read                                                                                                       |
-| `POST /orders/:id/attest`  | Authorized attestor confirms delivery (optional body: `{ attestorAddress }`; transitions to Attested when threshold is met)                        |
-| `POST /orders/:id/claim`   | Seller claims the escrowed funds                                                                                                                   |
-| `POST /orders/:id/reclaim` | Buyer reclaims funds once the deadline has passed                                                                                                  |
-| `POST /orders/:id/cancel`  | Buyer and seller mutually cancel order before attestation, refunding buyer                                                                         |
+| Endpoint                   | Effect                                                                                                                                                              |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /orders`             | Create an order: `{ sellerAddress, attestorAddress?, attestors?: string[], threshold?: number, arbiterAddress?, amountStroops, deadlineSeconds, tokenContractId? }` |
+| `GET /orders`              | List all orders                                                                                                                                                     |
+| `GET /orders/:id`          | Order status, including a live on-chain read                                                                                                                        |
+| `POST /orders/:id/attest`  | Authorized attestor confirms delivery (optional body: `{ attestorAddress }`; transitions to Attested when threshold is met)                                         |
+| `POST /orders/:id/claim`   | Seller claims the escrowed funds                                                                                                                                    |
+| `POST /orders/:id/reclaim` | Buyer reclaims funds once the deadline has passed                                                                                                                   |
+| `POST /orders/:id/cancel`  | Buyer and seller mutually cancel order before attestation, refunding buyer                                                                                          |
+| `POST /orders/:id/dispute` | Buyer disputes an attested order before claim, freezing the funds in Disputed state                                                                                 |
+| `POST /orders/:id/resolve` | Designated arbiter resolves a dispute (`{ releaseToSeller: boolean }`), paying the seller or refunding the buyer                                                    |
 
 ## Development & Quality Checks
 

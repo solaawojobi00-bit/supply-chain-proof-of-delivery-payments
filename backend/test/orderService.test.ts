@@ -11,6 +11,8 @@ vi.mock("../src/contractOps.js", () => ({
   callAttest: vi.fn(async () => "mock-attest-tx-hash"),
   callClaim: vi.fn(async () => "mock-claim-tx-hash"),
   callReclaim: vi.fn(async () => "mock-reclaim-tx-hash"),
+  callDispute: vi.fn(async () => "mock-dispute-tx-hash"),
+  callResolveDispute: vi.fn(async () => "mock-resolve-tx-hash"),
   readOnChainOrder: vi.fn(async () => ({
     buyer: buyerKeypair.publicKey(),
     seller: sellerKeypair.publicKey(),
@@ -26,10 +28,12 @@ import {
   attestOrder,
   claimOrder,
   createOrder,
+  disputeOrder,
   getAllOrders,
   getOrderById,
   getOrderWithChainState,
   reclaimOrder,
+  resolveDispute,
 } from "../src/orderService.js";
 import { HttpError } from "../src/httpError.js";
 
@@ -186,5 +190,51 @@ describe("Order Service Unit & Integration (orderService.ts)", () => {
     expect(fullyAttested.status).toBe("Attested");
     const confs = JSON.parse(fullyAttested.confirmations ?? "[]");
     expect(confs).toHaveLength(2);
+  });
+
+  it("supports dispute raising and arbiter resolution releasing to seller or buyer", async () => {
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+    const created = await createOrder({
+      sellerAddress: sellerKeypair.publicKey(),
+      attestorAddress: attestorKeypair.publicKey(),
+      amountStroops: 10000000n,
+      deadlineSeconds: deadline,
+    });
+
+    // Dispute before attestation fails
+    await expect(disputeOrder(created.id)).rejects.toThrowError(
+      /Order is Created; can only dispute an order that is Attested/,
+    );
+
+    // Attest order
+    await attestOrder(created.id);
+
+    // Raise dispute
+    const disputed = await disputeOrder(created.id);
+    expect(disputed.status).toBe("Disputed");
+    expect(disputed.dispute_tx_hash).toBe("mock-dispute-tx-hash");
+
+    // Claim fails when disputed
+    await expect(claimOrder(created.id)).rejects.toThrowError(/Order is Disputed/);
+
+    // Resolve dispute -> release to seller
+    const resolvedSeller = await resolveDispute(created.id, true);
+    expect(resolvedSeller.status).toBe("Claimed");
+    expect(resolvedSeller.resolve_tx_hash).toBe("mock-resolve-tx-hash");
+
+    // Create another order for refunding to buyer
+    const created2 = await createOrder({
+      sellerAddress: sellerKeypair.publicKey(),
+      attestorAddress: attestorKeypair.publicKey(),
+      amountStroops: 10000000n,
+      deadlineSeconds: deadline,
+    });
+    await attestOrder(created2.id);
+    await disputeOrder(created2.id);
+
+    // Resolve dispute -> refund to buyer
+    const resolvedBuyer = await resolveDispute(created2.id, false);
+    expect(resolvedBuyer.status).toBe("Reclaimed");
+    expect(resolvedBuyer.resolve_tx_hash).toBe("mock-resolve-tx-hash");
   });
 });

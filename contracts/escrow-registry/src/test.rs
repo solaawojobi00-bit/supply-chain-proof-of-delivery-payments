@@ -32,6 +32,7 @@ struct TestSetup {
     token: Address,
     token_client: token::Client<'static>,
     amount: i128,
+    arbiter: Address,
 }
 
 fn setup() -> TestSetup {
@@ -44,6 +45,7 @@ fn setup() -> TestSetup {
     let attestor1 = Address::generate(&env);
     let attestor2 = Address::generate(&env);
     let attestor3 = Address::generate(&env);
+    let arbiter = Address::generate(&env);
 
     let (token, asset_client, token_client) = create_token(&env, &admin);
     let amount: i128 = 1_000_000_000; // 100 XLM in stroops
@@ -68,6 +70,7 @@ fn setup() -> TestSetup {
         token,
         token_client,
         amount,
+        arbiter,
     }
 }
 
@@ -86,6 +89,7 @@ fn test_registry_full_happy_path_multiple_orders() {
         &s.seller,
         &s.attestors,
         &s.threshold,
+        &s.arbiter,
         &s.token,
         &s.amount,
         &deadline,
@@ -98,6 +102,7 @@ fn test_registry_full_happy_path_multiple_orders() {
         &s.seller,
         &s.attestors,
         &s.threshold,
+        &s.arbiter,
         &s.token,
         &(s.amount * 2),
         &deadline,
@@ -153,6 +158,7 @@ fn test_registry_reclaim_after_deadline() {
         &s.seller,
         &s.attestors,
         &s.threshold,
+        &s.arbiter,
         &s.token,
         &s.amount,
         &deadline,
@@ -183,6 +189,7 @@ fn test_registry_duplicate_order_id_rejected() {
         &s.seller,
         &s.attestors,
         &s.threshold,
+        &s.arbiter,
         &s.token,
         &s.amount,
         &deadline,
@@ -194,6 +201,7 @@ fn test_registry_duplicate_order_id_rejected() {
         &s.seller,
         &s.attestors,
         &s.threshold,
+        &s.arbiter,
         &s.token,
         &s.amount,
         &deadline,
@@ -219,6 +227,7 @@ fn test_registry_claim_before_attestation_fails() {
         &s.seller,
         &s.attestors,
         &s.threshold,
+        &s.arbiter,
         &s.token,
         &s.amount,
         &deadline,
@@ -242,6 +251,7 @@ fn test_registry_reclaim_before_deadline_fails() {
         &s.seller,
         &s.attestors,
         &s.threshold,
+        &s.arbiter,
         &s.token,
         &s.amount,
         &deadline,
@@ -262,6 +272,7 @@ fn test_registry_attest_after_deadline_fails() {
         &s.seller,
         &s.attestors,
         &s.threshold,
+        &s.arbiter,
         &s.token,
         &s.amount,
         &deadline,
@@ -284,6 +295,7 @@ fn test_registry_invalid_parameters() {
         &s.seller,
         &s.attestors,
         &s.threshold,
+        &s.arbiter,
         &s.token,
         &0,
         &deadline,
@@ -297,6 +309,7 @@ fn test_registry_invalid_parameters() {
         &s.seller,
         &s.attestors,
         &s.threshold,
+        &s.arbiter,
         &s.token,
         &s.amount,
         &0,
@@ -310,6 +323,7 @@ fn test_registry_invalid_parameters() {
         &s.seller,
         &s.attestors,
         &0,
+        &s.arbiter,
         &s.token,
         &s.amount,
         &deadline,
@@ -323,6 +337,7 @@ fn test_registry_invalid_parameters() {
         &s.seller,
         &s.attestors,
         &4,
+        &s.arbiter,
         &s.token,
         &s.amount,
         &deadline,
@@ -342,6 +357,7 @@ fn test_registry_mutual_cancel_success() {
         &s.seller,
         &s.attestors,
         &s.threshold,
+        &s.arbiter,
         &s.token,
         &s.amount,
         &deadline,
@@ -370,6 +386,7 @@ fn test_registry_cancel_after_attestation_fails() {
         &s.seller,
         &s.attestors,
         &s.threshold,
+        &s.arbiter,
         &s.token,
         &s.amount,
         &deadline,
@@ -391,6 +408,7 @@ fn test_registry_cancel_requires_both_auths() {
     let buyer = Address::generate(&env);
     let seller = Address::generate(&env);
     let attestor = Address::generate(&env);
+    let arbiter = Address::generate(&env);
 
     let (token, asset_client, _token_client) = create_token(&env, &admin);
     let amount: i128 = 1_000_000_000;
@@ -410,6 +428,7 @@ fn test_registry_cancel_requires_both_auths() {
         &seller,
         &attestors,
         &1,
+        &arbiter,
         &token,
         &amount,
         &deadline,
@@ -468,4 +487,79 @@ fn test_registry_cancel_requires_both_auths() {
     let res = client.try_cancel(&order_id);
     assert!(res.is_ok());
     assert_eq!(client.get_order(&order_id).status, OrderStatus::Cancelled);
+}
+
+#[test]
+fn test_registry_dispute_and_resolve_to_seller() {
+    let s = setup();
+    let order_id: u64 = 901;
+    let deadline = s.env.ledger().timestamp() + 1000;
+
+    s.client.create_order(
+        &order_id,
+        &s.buyer,
+        &s.seller,
+        &s.attestors,
+        &s.threshold,
+        &s.arbiter,
+        &s.token,
+        &s.amount,
+        &deadline,
+    );
+
+    // Dispute before attestation fails
+    let res = s.client.try_dispute(&order_id);
+    assert_eq!(res, Err(Ok(Error::WrongStatus)));
+
+    // Reach threshold attestation
+    s.client.attest(&order_id, &s.attestor1);
+    s.client.attest(&order_id, &s.attestor2);
+    assert_eq!(s.client.get_order(&order_id).status, OrderStatus::Attested);
+
+    // Buyer disputes
+    s.client.dispute(&order_id);
+    assert_eq!(s.client.get_order(&order_id).status, OrderStatus::Disputed);
+
+    // Seller cannot claim while disputed
+    let claim_res = s.client.try_claim(&order_id);
+    assert_eq!(claim_res, Err(Ok(Error::WrongStatus)));
+
+    // Arbiter resolves releasing to seller
+    s.client.resolve_dispute(&order_id, &true);
+    assert_eq!(s.client.get_order(&order_id).status, OrderStatus::Claimed);
+    assert_eq!(s.token_client.balance(&s.seller), s.amount);
+    assert_eq!(s.token_client.balance(&s.contract_id), 0);
+}
+
+#[test]
+fn test_registry_dispute_and_resolve_to_buyer() {
+    let s = setup();
+    let order_id: u64 = 902;
+    let deadline = s.env.ledger().timestamp() + 1000;
+
+    s.client.create_order(
+        &order_id,
+        &s.buyer,
+        &s.seller,
+        &s.attestors,
+        &s.threshold,
+        &s.arbiter,
+        &s.token,
+        &s.amount,
+        &deadline,
+    );
+
+    // Reach threshold attestation
+    s.client.attest(&order_id, &s.attestor1);
+    s.client.attest(&order_id, &s.attestor2);
+
+    // Buyer disputes
+    s.client.dispute(&order_id);
+    assert_eq!(s.client.get_order(&order_id).status, OrderStatus::Disputed);
+
+    // Arbiter resolves releasing to buyer (refund)
+    s.client.resolve_dispute(&order_id, &false);
+    assert_eq!(s.client.get_order(&order_id).status, OrderStatus::Reclaimed);
+    assert_eq!(s.token_client.balance(&s.buyer), s.amount * 10);
+    assert_eq!(s.token_client.balance(&s.contract_id), 0);
 }

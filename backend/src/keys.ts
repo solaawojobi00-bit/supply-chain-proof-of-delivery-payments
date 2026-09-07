@@ -14,7 +14,7 @@ export const attestorKeypair = Keypair.fromSecret(config.attestorSecretKey);
  * to act as, since there is no client-side wallet-signing flow yet.
  */
 const keyring = new Map<string, Keypair>(
-  [buyerKeypair, sellerKeypair, attestorKeypair].map((kp) => [kp.publicKey(), kp]),
+  [deployerKeypair, buyerKeypair, sellerKeypair, attestorKeypair].map((kp) => [kp.publicKey(), kp]),
 );
 
 export function findLocalSigner(address: string): Keypair | undefined {

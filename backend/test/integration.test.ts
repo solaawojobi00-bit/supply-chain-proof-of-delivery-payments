@@ -20,11 +20,15 @@ vi.mock("../src/contractOps.js", () => {
     callClaim: vi.fn(async () => "mock-claim-tx-hash"),
     callReclaim: vi.fn(async () => "mock-reclaim-tx-hash"),
     callCancel: vi.fn(async () => "mock-cancel-tx-hash"),
+    callDispute: vi.fn(async () => "mock-dispute-tx-hash"),
+    callResolveDispute: vi.fn(async () => "mock-resolve-tx-hash"),
     callRegistryCreateOrder: vi.fn(async () => "mock-reg-create-tx-hash"),
     callRegistryAttest: vi.fn(async () => "mock-reg-attest-tx-hash"),
     callRegistryClaim: vi.fn(async () => "mock-reg-claim-tx-hash"),
     callRegistryReclaim: vi.fn(async () => "mock-reg-reclaim-tx-hash"),
     callRegistryCancel: vi.fn(async () => "mock-reg-cancel-tx-hash"),
+    callRegistryDispute: vi.fn(async () => "mock-reg-dispute-tx-hash"),
+    callRegistryResolveDispute: vi.fn(async () => "mock-reg-resolve-tx-hash"),
     readOnChainOrder: vi.fn(async (contractId: string) => ({
       buyer: buyerKeypair.publicKey(),
       seller: sellerKeypair.publicKey(),
@@ -712,6 +716,89 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       expect(finalClaim.status).toBe(200);
       const finalOrder = (await finalClaim.json()) as { status: string };
       expect(finalOrder.status).toBe("Claimed");
+    });
+  });
+
+  describe("Full Lifecycle 4: Dispute & Arbiter Resolution Paths", () => {
+    it("executes Dispute -> Arbiter resolves releasing to seller", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+      // 1. Create order
+      const createRes = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestorAddress: attestorKeypair.publicKey(),
+          amountStroops: "50000000",
+          deadlineSeconds: String(deadline),
+        }),
+      });
+      const order = (await createRes.json()) as { id: string };
+
+      // 2. Attest order
+      await fetch(`${baseUrl}/orders/${order.id}/attest`, { method: "POST" });
+
+      // 3. Buyer disputes
+      const disputeRes = await fetch(`${baseUrl}/orders/${order.id}/dispute`, { method: "POST" });
+      expect(disputeRes.status).toBe(200);
+      const disputed = (await disputeRes.json()) as { status: string; lifecycle: string };
+      expect(disputed.status).toBe("Disputed");
+      expect(disputed.lifecycle).toBe("disputed");
+
+      // 4. Seller claim is blocked while disputed -> 409 Conflict
+      const claimRes = await fetch(`${baseUrl}/orders/${order.id}/claim`, { method: "POST" });
+      expect(claimRes.status).toBe(409);
+
+      // 5. Arbiter resolves releasing to seller
+      const resolveRes = await fetch(`${baseUrl}/orders/${order.id}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ releaseToSeller: true }),
+      });
+      expect(resolveRes.status).toBe(200);
+      const resolved = (await resolveRes.json()) as {
+        status: string;
+        lifecycle: string;
+        txHashes: { resolve: string };
+      };
+      expect(resolved.status).toBe("Claimed");
+      expect(resolved.lifecycle).toBe("claimed");
+      expect(resolved.txHashes.resolve).toBe("mock-resolve-tx-hash");
+    });
+
+    it("executes Dispute -> Arbiter resolves refunding to buyer", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+      // 1. Create order
+      const createRes = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestorAddress: attestorKeypair.publicKey(),
+          amountStroops: "40000000",
+          deadlineSeconds: String(deadline),
+        }),
+      });
+      const order = (await createRes.json()) as { id: string };
+
+      // 2. Attest order
+      await fetch(`${baseUrl}/orders/${order.id}/attest`, { method: "POST" });
+
+      // 3. Buyer disputes
+      await fetch(`${baseUrl}/orders/${order.id}/dispute`, { method: "POST" });
+
+      // 4. Arbiter resolves refunding to buyer
+      const resolveRes = await fetch(`${baseUrl}/orders/${order.id}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ releaseToSeller: false }),
+      });
+      expect(resolveRes.status).toBe(200);
+      const resolved = (await resolveRes.json()) as { status: string; lifecycle: string };
+      expect(resolved.status).toBe("Reclaimed");
+      expect(resolved.lifecycle).toBe("reclaimed");
     });
   });
 });

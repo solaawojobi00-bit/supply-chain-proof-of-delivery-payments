@@ -4,12 +4,16 @@ import {
   callCancel,
   callClaim,
   callCreate,
+  callDispute,
   callReclaim,
   callRegistryAttest,
   callRegistryCancel,
   callRegistryClaim,
   callRegistryCreateOrder,
+  callRegistryDispute,
   callRegistryReclaim,
+  callRegistryResolveDispute,
+  callResolveDispute,
   deployEscrowContract,
   readOnChainOrder,
   readOnChainRegistryOrder,
@@ -24,13 +28,14 @@ import {
   type OrderRow,
 } from "./db.js";
 import { HttpError } from "./httpError.js";
-import { buyerKeypair, findLocalSigner } from "./keys.js";
+import { buyerKeypair, deployerKeypair, findLocalSigner } from "./keys.js";
 
 export interface CreateOrderInput {
   sellerAddress: string;
   attestorAddress?: string;
   attestors?: string[];
   threshold?: number;
+  arbiterAddress?: string;
   amountStroops: bigint;
   deadlineSeconds: bigint;
   tokenContractId?: string;
@@ -52,6 +57,8 @@ export function lifecycleLabel(order: OrderRow): string {
       return deadlinePassed ? "deadline-passed" : "in-transit";
     case "Attested":
       return "delivered/confirmed";
+    case "Disputed":
+      return "disputed";
     case "Claimed":
       return "claimed";
     case "Reclaimed":
@@ -72,6 +79,7 @@ export async function createOrder(
     input.attestors && input.attestors.length > 0 ? input.attestors : [input.attestorAddress!];
   const threshold = input.threshold ?? 1;
   const primaryAttestor = attestors[0];
+  const arbiterAddress = input.arbiterAddress ?? deployerKeypair.publicKey();
   let contractId: string;
   let createTxHash: string | undefined;
 
@@ -82,6 +90,7 @@ export async function createOrder(
       seller: input.sellerAddress,
       attestors,
       threshold,
+      arbiter: arbiterAddress,
       token: paymentToken,
       amount: input.amountStroops,
       deadline: input.deadlineSeconds,
@@ -93,6 +102,7 @@ export async function createOrder(
       seller: input.sellerAddress,
       attestors,
       threshold,
+      arbiter: arbiterAddress,
       token: paymentToken,
       amount: input.amountStroops,
       deadline: input.deadlineSeconds,
@@ -109,6 +119,7 @@ export async function createOrder(
     attestors: JSON.stringify(attestors),
     threshold,
     confirmations: JSON.stringify([]),
+    arbiter_address: arbiterAddress,
     token_contract_id: paymentToken,
     amount: input.amountStroops.toString(),
     deadline: Number(input.deadlineSeconds),
@@ -117,6 +128,8 @@ export async function createOrder(
     attest_tx_hash: null,
     claim_tx_hash: null,
     reclaim_tx_hash: null,
+    dispute_tx_hash: null,
+    resolve_tx_hash: null,
     idempotency_key: idempotencyKey ?? null,
     request_payload: requestPayload ?? null,
     created_at: new Date().toISOString(),
@@ -281,5 +294,58 @@ export async function cancelOrder(id: string): Promise<OrderRow> {
         )
       : await callCancel(order.contract_id, buyerSigner, sellerSigner);
   updateOrderStatus(id, "Cancelled", "cancel_tx_hash", txHash ?? "");
+  return requireOrder(id);
+}
+
+export async function disputeOrder(id: string): Promise<OrderRow> {
+  const order = requireOrder(id);
+  if (order.status !== "Attested") {
+    throw new HttpError(
+      409,
+      `Order is ${order.status}; can only dispute an order that is Attested`,
+    );
+  }
+  const buyerSigner = findLocalSigner(order.buyer_address);
+  if (!buyerSigner) {
+    throw new HttpError(
+      400,
+      "No local signer for this buyer address. Phase 1 backend requires local signers for raising disputes.",
+    );
+  }
+  const txHash =
+    order.numeric_id != null && order.contract_id === config.escrowRegistryContractId
+      ? await callRegistryDispute(order.contract_id, buyerSigner, BigInt(order.numeric_id))
+      : await callDispute(order.contract_id, buyerSigner);
+  updateOrderStatus(id, "Disputed", "dispute_tx_hash", txHash ?? "");
+  return requireOrder(id);
+}
+
+export async function resolveDispute(id: string, releaseToSeller: boolean): Promise<OrderRow> {
+  const order = requireOrder(id);
+  if (order.status !== "Disputed") {
+    throw new HttpError(
+      409,
+      `Order is ${order.status}; can only resolve a dispute on an order that is Disputed`,
+    );
+  }
+  const arbiterAddress = order.arbiter_address ?? deployerKeypair.publicKey();
+  const arbiterSigner = findLocalSigner(arbiterAddress);
+  if (!arbiterSigner) {
+    throw new HttpError(
+      400,
+      `No local signer for arbiter address ${arbiterAddress}. Phase 1 backend requires local signers for dispute resolution.`,
+    );
+  }
+  const txHash =
+    order.numeric_id != null && order.contract_id === config.escrowRegistryContractId
+      ? await callRegistryResolveDispute(
+          order.contract_id,
+          arbiterSigner,
+          BigInt(order.numeric_id),
+          releaseToSeller,
+        )
+      : await callResolveDispute(order.contract_id, arbiterSigner, releaseToSeller);
+  const nextStatus = releaseToSeller ? "Claimed" : "Reclaimed";
+  updateOrderStatus(id, nextStatus, "resolve_tx_hash", txHash ?? "");
   return requireOrder(id);
 }

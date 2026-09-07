@@ -13,11 +13,15 @@ vi.mock("../src/contractOps.js", () => ({
   callClaim: vi.fn(async () => "mock-claim-hash"),
   callReclaim: vi.fn(async () => "mock-reclaim-hash"),
   callCancel: vi.fn(async () => "mock-cancel-hash"),
+  callDispute: vi.fn(async () => "mock-dispute-hash"),
+  callResolveDispute: vi.fn(async () => "mock-resolve-hash"),
   callRegistryCreateOrder: vi.fn(async () => "mock-reg-create-hash"),
   callRegistryAttest: vi.fn(async () => "mock-reg-attest-hash"),
   callRegistryClaim: vi.fn(async () => "mock-reg-claim-hash"),
   callRegistryReclaim: vi.fn(async () => "mock-reg-reclaim-hash"),
   callRegistryCancel: vi.fn(async () => "mock-reg-cancel-hash"),
+  callRegistryDispute: vi.fn(async () => "mock-reg-dispute-hash"),
+  callRegistryResolveDispute: vi.fn(async () => "mock-reg-resolve-hash"),
   readOnChainOrder: vi.fn(async () => ({
     buyer: buyerKeypair.publicKey(),
     seller: sellerKeypair.publicKey(),
@@ -372,5 +376,45 @@ describe("API Routes (routes.ts)", () => {
     const orderAttest2 = (await attest2Res.json()) as any;
     expect(orderAttest2.status).toBe("Attested");
     expect(orderAttest2.confirmations).toHaveLength(2);
+  });
+
+  it("POST /orders/:id/dispute and POST /orders/:id/resolve flow", async () => {
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
+    const createRes = await fetch(`${baseUrl}/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sellerAddress: sellerKeypair.publicKey(),
+        attestorAddress: attestorKeypair.publicKey(),
+        amountStroops: "20000000",
+        deadlineSeconds: deadline.toString(),
+      }),
+    });
+    const order = (await createRes.json()) as any;
+
+    // Attest order
+    await fetch(`${baseUrl}/orders/${order.id}/attest`, { method: "POST" });
+
+    // Dispute order
+    const disputeRes = await fetch(`${baseUrl}/orders/${order.id}/dispute`, {
+      method: "POST",
+    });
+    expect(disputeRes.status).toBe(200);
+    const disputedOrder = (await disputeRes.json()) as any;
+    expect(disputedOrder.status).toBe("Disputed");
+    expect(disputedOrder.lifecycle).toBe("disputed");
+    expect(disputedOrder.txHashes.dispute).toBe("mock-dispute-hash");
+
+    // Resolve dispute releasing to seller
+    const resolveRes = await fetch(`${baseUrl}/orders/${order.id}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ releaseToSeller: true }),
+    });
+    expect(resolveRes.status).toBe(200);
+    const resolvedOrder = (await resolveRes.json()) as any;
+    expect(resolvedOrder.status).toBe("Claimed");
+    expect(resolvedOrder.lifecycle).toBe("claimed");
+    expect(resolvedOrder.txHashes.resolve).toBe("mock-resolve-hash");
   });
 });

@@ -7,6 +7,7 @@ use soroban_sdk::{contract, contracterror, contractimpl, contracttype, token, Ad
 pub enum OrderStatus {
     Created,
     Attested,
+    Disputed,
     Claimed,
     Reclaimed,
     Cancelled,
@@ -21,6 +22,7 @@ pub struct Order {
     pub attestors: Vec<Address>,
     pub threshold: u32,
     pub confirmations: Vec<Address>,
+    pub arbiter: Address,
     pub token: Address,
     pub amount: i128,
     pub deadline: u64,
@@ -69,6 +71,7 @@ impl EscrowRegistryContract {
         seller: Address,
         attestors: Vec<Address>,
         threshold: u32,
+        arbiter: Address,
         token: Address,
         amount: i128,
         deadline: u64,
@@ -102,6 +105,7 @@ impl EscrowRegistryContract {
             attestors,
             threshold,
             confirmations: Vec::new(&env),
+            arbiter,
             token,
             amount,
             deadline,
@@ -141,6 +145,58 @@ impl EscrowRegistryContract {
 
         if order.confirmations.len() >= order.threshold {
             order.status = OrderStatus::Attested;
+        }
+
+        env.storage().persistent().set(&key, &order);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, STORAGE_TTL_THRESHOLD, STORAGE_TTL_LEDGERS);
+
+        Ok(())
+    }
+
+    /// Buyer raises a dispute against an attested delivery for a given `order_id` before the seller claims.
+    /// Only valid while `status == Attested`. Pauses the claim.
+    pub fn dispute(env: Env, order_id: u64) -> Result<(), Error> {
+        let key = DataKey::Order(order_id);
+        let mut order = Self::load(&env, order_id)?;
+
+        if order.status != OrderStatus::Attested {
+            return Err(Error::WrongStatus);
+        }
+
+        order.buyer.require_auth();
+
+        order.status = OrderStatus::Disputed;
+        env.storage().persistent().set(&key, &order);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, STORAGE_TTL_THRESHOLD, STORAGE_TTL_LEDGERS);
+
+        Ok(())
+    }
+
+    /// Designated arbiter resolves a contested attestation for a given `order_id`.
+    /// Only valid while `status == Disputed`.
+    /// If `release_to_seller == true`: transfers funds to seller and sets status to `Claimed`.
+    /// If `release_to_seller == false`: transfers funds to buyer and sets status to `Reclaimed`.
+    pub fn resolve_dispute(env: Env, order_id: u64, release_to_seller: bool) -> Result<(), Error> {
+        let key = DataKey::Order(order_id);
+        let mut order = Self::load(&env, order_id)?;
+
+        if order.status != OrderStatus::Disputed {
+            return Err(Error::WrongStatus);
+        }
+
+        order.arbiter.require_auth();
+
+        let token_client = token::Client::new(&env, &order.token);
+        if release_to_seller {
+            token_client.transfer(&env.current_contract_address(), &order.seller, &order.amount);
+            order.status = OrderStatus::Claimed;
+        } else {
+            token_client.transfer(&env.current_contract_address(), &order.buyer, &order.amount);
+            order.status = OrderStatus::Reclaimed;
         }
 
         env.storage().persistent().set(&key, &order);

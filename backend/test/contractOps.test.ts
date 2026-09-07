@@ -29,11 +29,15 @@ import {
   callAttest,
   callClaim,
   callReclaim,
+  callDispute,
+  callResolveDispute,
   readOnChainOrder,
   callRegistryCreateOrder,
   callRegistryAttest,
   callRegistryClaim,
   callRegistryReclaim,
+  callRegistryDispute,
+  callRegistryResolveDispute,
   readOnChainRegistryOrder,
 } from "../src/contractOps.js";
 
@@ -41,6 +45,7 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
   const buyerKeypair = Keypair.random();
   const sellerKeypair = Keypair.random();
   const attestorKeypair = Keypair.random();
+  const arbiterKeypair = Keypair.random();
   const contractId = "C" + "0".repeat(55);
 
   beforeEach(() => {
@@ -99,6 +104,7 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
       seller: sellerKeypair.publicKey(),
       attestors: [attestorKeypair.publicKey()],
       threshold: 1,
+      arbiter: arbiterKeypair.publicKey(),
       amount: 1000n,
       deadline: 123456n,
     });
@@ -168,6 +174,31 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
     expect(reclaimLog.txHash).toBe("tx-reclaim-hash");
   });
 
+  it("callDispute and callResolveDispute log and send dispute transactions", async () => {
+    const _consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const mockDisputeMethod = vi.fn().mockResolvedValueOnce({
+      signAndSend: vi.fn().mockResolvedValueOnce({
+        result: { unwrap: () => null },
+        sendTransactionResponse: { hash: "tx-dispute-hash" },
+      }),
+    });
+    const mockResolveMethod = vi.fn().mockResolvedValueOnce({
+      signAndSend: vi.fn().mockResolvedValueOnce({
+        result: { unwrap: () => null },
+        sendTransactionResponse: { hash: "tx-resolve-hash" },
+      }),
+    });
+    mockFrom
+      .mockResolvedValueOnce({ dispute: mockDisputeMethod })
+      .mockResolvedValueOnce({ resolve_dispute: mockResolveMethod });
+
+    const disputeHash = await callDispute(contractId, buyerKeypair);
+    expect(disputeHash).toBe("tx-dispute-hash");
+
+    const resolveHash = await callResolveDispute(contractId, arbiterKeypair, true);
+    expect(resolveHash).toBe("tx-resolve-hash");
+  });
+
   it("readOnChainOrder unwraps and formats on-chain order data", async () => {
     const mockGetOrder = vi.fn().mockResolvedValueOnce({
       result: {
@@ -177,6 +208,7 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
           attestors: [attestorKeypair.publicKey()],
           threshold: 1,
           confirmations: [attestorKeypair.publicKey()],
+          arbiter: arbiterKeypair.publicKey(),
           token: "mock-token",
           amount: 500n,
           deadline: 9999n,
@@ -207,6 +239,7 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
       seller: sellerKeypair.publicKey(),
       attestors: [attestorKeypair.publicKey()],
       threshold: 1,
+      arbiter: arbiterKeypair.publicKey(),
       amount: 1000n,
       deadline: 123456n,
     });
@@ -280,6 +313,30 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
     expect(regLog.orderId).toBe("101");
   });
 
+  it("callRegistryDispute and callRegistryResolveDispute log and send dispute transactions", async () => {
+    const mockDispute = vi.fn().mockResolvedValueOnce({
+      signAndSend: vi.fn().mockResolvedValueOnce({
+        result: { unwrap: () => null },
+        sendTransactionResponse: { hash: "tx-reg-dispute-hash" },
+      }),
+    });
+    const mockResolve = vi.fn().mockResolvedValueOnce({
+      signAndSend: vi.fn().mockResolvedValueOnce({
+        result: { unwrap: () => null },
+        sendTransactionResponse: { hash: "tx-reg-resolve-hash" },
+      }),
+    });
+    mockFrom
+      .mockResolvedValueOnce({ dispute: mockDispute })
+      .mockResolvedValueOnce({ resolve_dispute: mockResolve });
+
+    const disHash = await callRegistryDispute(contractId, buyerKeypair, 101n);
+    expect(disHash).toBe("tx-reg-dispute-hash");
+
+    const resHash = await callRegistryResolveDispute(contractId, arbiterKeypair, 101n, false);
+    expect(resHash).toBe("tx-reg-resolve-hash");
+  });
+
   it("readOnChainRegistryOrder unwraps and returns order with tag", async () => {
     const mockGetOrder = vi.fn().mockResolvedValueOnce({
       result: {
@@ -290,6 +347,7 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
           attestors: [attestorKeypair.publicKey()],
           threshold: 1,
           confirmations: [],
+          arbiter: arbiterKeypair.publicKey(),
           token: "mock-token",
           amount: 500n,
           deadline: 9999n,

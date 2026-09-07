@@ -160,4 +160,32 @@ describe("Schema Validation (schemas.ts)", () => {
     });
     expect(missingBoth.success).toBe(false);
   });
+
+  it("validates arbiterAddress when provided or rejects malformed arbiterAddress", () => {
+    const futureDeadline = String(Math.floor(Date.now() / 1000) + 3600);
+    const arbiter = Keypair.random();
+
+    const validArbiter = createOrderSchema.safeParse({
+      sellerAddress: sellerKeypair.publicKey(),
+      attestorAddress: attestorKeypair.publicKey(),
+      arbiterAddress: arbiter.publicKey(),
+      amountStroops: "10000000",
+      deadlineSeconds: futureDeadline,
+    });
+    expect(validArbiter.success).toBe(true);
+
+    const invalidArbiter = createOrderSchema.safeParse({
+      sellerAddress: sellerKeypair.publicKey(),
+      attestorAddress: attestorKeypair.publicKey(),
+      arbiterAddress: "invalid-arbiter-address",
+      amountStroops: "10000000",
+      deadlineSeconds: futureDeadline,
+    });
+    expect(invalidArbiter.success).toBe(false);
+    if (!invalidArbiter.success) {
+      const formatted = formatZodError(invalidArbiter.error);
+      expect(formatted).toContain("arbiterAddress");
+      expect(formatted).toContain("valid Stellar public key");
+    }
+  });
 });
