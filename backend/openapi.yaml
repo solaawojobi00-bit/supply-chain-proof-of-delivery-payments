@@ -1,0 +1,421 @@
+openapi: 3.0.3
+info:
+  title: Supply Chain Proof-of-Delivery Escrow API
+  version: 0.1.0
+  description: >
+    REST API for managing escrowed payments with proof-of-delivery attestation on the Stellar Soroban network.
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: http://127.0.0.1:3000
+    description: Local development server
+security: []
+
+paths:
+  /orders:
+    post:
+      summary: Create a new escrow order
+      description: >
+        Deploys a new Soroban escrow contract instance and locks the buyer's funds in escrow.
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Order created successfully and funds locked in escrow
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          description: Missing or invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server or contract deployment error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      summary: List all orders
+      description: Returns all orders tracked in the local database.
+      operationId: getAllOrders
+      responses:
+        '200':
+          description: List of all orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Order'
+        '400':
+          description: Invalid request query or parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /orders/{id}:
+    get:
+      summary: Get order details and live on-chain state
+      description: Retrieves local tracking information along with real-time state read from the Soroban escrow contract.
+      operationId: getOrderById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: UUID of the order
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Order details with live on-chain state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderWithChainState'
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error or chain query failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /orders/{id}/attest:
+    post:
+      summary: Attest proof of delivery
+      description: Attestor confirms delivery of the goods, unlocking the escrow for seller claim.
+      operationId: attestOrder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: UUID of the order
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Order successfully attested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          description: No local signer available for the attestor address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Order is not in Created state or deadline has already passed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Transaction execution failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /orders/{id}/claim:
+    post:
+      summary: Seller claims escrowed funds
+      description: Seller withdraws funds from the escrow contract after successful attestation.
+      operationId: claimOrder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: UUID of the order
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Funds claimed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          description: No local signer available for the seller address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Order is not in Attested state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Transaction execution failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /orders/{id}/reclaim:
+    post:
+      summary: Buyer reclaims escrowed funds
+      description: Buyer reclaims funds if the delivery deadline has expired without attestation.
+      operationId: reclaimOrder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: UUID of the order
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Funds reclaimed successfully by buyer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Order is not in Created state or deadline has not yet passed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Transaction execution failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    CreateOrderRequest:
+      type: object
+      required:
+        - sellerAddress
+        - attestorAddress
+        - amountStroops
+        - deadlineSeconds
+      properties:
+        sellerAddress:
+          type: string
+          description: Stellar public address (G...) of the seller
+          example: "GC5H3W256B3QW4A44GAK36XN763K2KRN7O2OESN553TUXW7R6AKN4V6E"
+        attestorAddress:
+          type: string
+          description: Stellar public address (G...) of the trusted attestor
+          example: "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"
+        amountStroops:
+          type: string
+          description: Amount in stroops (1 XLM = 10,000,000 stroops) as a string
+          example: "10000000"
+        deadlineSeconds:
+          type: string
+          description: UNIX timestamp (seconds) after which funds can be reclaimed if unattested
+          example: "1735689600"
+
+    OrderTxHashes:
+      type: object
+      required:
+        - create
+        - attest
+        - claim
+        - reclaim
+      properties:
+        create:
+          type: string
+          nullable: true
+          description: Transaction hash of escrow contract creation
+          example: "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
+        attest:
+          type: string
+          nullable: true
+          description: Transaction hash of attestation
+          example: null
+        claim:
+          type: string
+          nullable: true
+          description: Transaction hash of seller claim
+          example: null
+        reclaim:
+          type: string
+          nullable: true
+          description: Transaction hash of buyer reclaim
+          example: null
+
+    Order:
+      type: object
+      required:
+        - id
+        - contractId
+        - buyerAddress
+        - sellerAddress
+        - attestorAddress
+        - tokenContractId
+        - amountStroops
+        - deadline
+        - status
+        - lifecycle
+        - txHashes
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Local database order identifier
+          example: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+        contractId:
+          type: string
+          description: Stellar contract address (C...) of the escrow instance
+          example: "CA3D5KRYMCMUZGAPOETEZ2NZNOME4H664X4UIRGFW6UR47X7U6GFF6MS"
+        buyerAddress:
+          type: string
+          description: Stellar public address (G...) of the buyer
+          example: "GB6NVEN5HSUBKMYCE5ZOWSK5RPO5RDTBWTJHQ35YKVGFFL3U2NOSVNQI"
+        sellerAddress:
+          type: string
+          description: Stellar public address (G...) of the seller
+          example: "GC5H3W256B3QW4A44GAK36XN763K2KRN7O2OESN553TUXW7R6AKN4V6E"
+        attestorAddress:
+          type: string
+          description: Stellar public address (G...) of the attestor
+          example: "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"
+        tokenContractId:
+          type: string
+          description: Stellar contract address (C...) of the payment asset
+          example: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+        amountStroops:
+          type: string
+          description: Payment amount in stroops
+          example: "10000000"
+        deadline:
+          type: integer
+          description: UNIX timestamp deadline in seconds
+          example: 1735689600
+        status:
+          type: string
+          enum:
+            - Created
+            - Attested
+            - Claimed
+            - Reclaimed
+          description: On-chain / DB lifecycle state
+          example: "Created"
+        lifecycle:
+          type: string
+          enum:
+            - in-transit
+            - deadline-passed
+            - delivered/confirmed
+            - claimed
+            - reclaimed
+          description: High-level human-readable lifecycle label
+          example: "in-transit"
+        txHashes:
+          $ref: '#/components/schemas/OrderTxHashes'
+        createdAt:
+          type: string
+          format: date-time
+          description: ISO timestamp of order creation
+          example: "2026-09-07T12:00:00.000Z"
+
+    OnChainState:
+      type: object
+      required:
+        - seller
+        - attestor
+        - amount
+        - deadline
+        - status
+      properties:
+        seller:
+          type: string
+          description: Stellar address of the seller recorded on-chain
+          example: "GC5H3W256B3QW4A44GAK36XN763K2KRN7O2OESN553TUXW7R6AKN4V6E"
+        attestor:
+          type: string
+          description: Stellar address of the attestor recorded on-chain
+          example: "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"
+        amount:
+          type: string
+          description: Escrowed amount in stroops
+          example: "10000000"
+        deadline:
+          type: string
+          description: UNIX timestamp deadline in seconds
+          example: "1735689600"
+        status:
+          type: string
+          enum:
+            - Created
+            - Attested
+            - Claimed
+            - Reclaimed
+          description: Raw on-chain status
+          example: "Created"
+
+    OrderWithChainState:
+      allOf:
+        - $ref: '#/components/schemas/Order'
+        - type: object
+          required:
+            - onChain
+          properties:
+            onChain:
+              $ref: '#/components/schemas/OnChainState'
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Error message describing the reason for failure
+          example: "Order 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d not found"

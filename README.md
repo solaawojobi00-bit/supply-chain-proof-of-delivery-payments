@@ -84,6 +84,8 @@ transaction hash for every state-changing call.
 
 ## API
 
+A complete machine-readable OpenAPI 3.0 specification is available at [`backend/openapi.yaml`](backend/openapi.yaml).
+
 | Endpoint | Effect |
 |---|---|
 | `POST /orders` | Create an order: `{ sellerAddress, attestorAddress, amountStroops, deadlineSeconds }` |
