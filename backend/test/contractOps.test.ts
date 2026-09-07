@@ -207,7 +207,9 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
 
     expect(hash).toBe("tx-registry-create-hash");
     const logged = consoleSpy.mock.calls.map((c) => JSON.parse(c[0]));
-    const regLog = logged.find((l) => l.type === "contract_call" && l.method === "registry_create_order");
+    const regLog = logged.find(
+      (l) => l.type === "contract_call" && l.method === "registry_create_order",
+    );
     expect(regLog).toBeDefined();
     expect(regLog.orderId).toBe("101");
   });
@@ -261,7 +263,9 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
     const hash = await callRegistryReclaim(contractId, buyerKeypair, 101n);
     expect(hash).toBe("tx-registry-reclaim-hash");
     const logged = consoleSpy.mock.calls.map((c) => JSON.parse(c[0]));
-    const regLog = logged.find((l) => l.type === "contract_call" && l.method === "registry_reclaim");
+    const regLog = logged.find(
+      (l) => l.type === "contract_call" && l.method === "registry_reclaim",
+    );
     expect(regLog).toBeDefined();
     expect(regLog.orderId).toBe("101");
   });

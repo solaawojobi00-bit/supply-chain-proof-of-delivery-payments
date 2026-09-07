@@ -264,7 +264,9 @@ export interface EscrowRegistryContract {
   attest(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
   claim(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
   reclaim(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
-  get_order(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<RawOrder & { order_id: bigint }>>>;
+  get_order(args: {
+    order_id: bigint;
+  }): Promise<AssembledTransaction<ContractResult<RawOrder & { order_id: bigint }>>>;
 }
 
 export interface OnChainOrder {
@@ -300,7 +302,14 @@ async function registryClientFor(contractId: string, signer: Keypair) {
 export async function callRegistryCreateOrder(
   contractId: string,
   buyer: Keypair,
-  params: { orderId: bigint; seller: string; attestor: string; token?: string; amount: bigint; deadline: bigint },
+  params: {
+    orderId: bigint;
+    seller: string;
+    attestor: string;
+    token?: string;
+    amount: bigint;
+    deadline: bigint;
+  },
 ): Promise<string | undefined> {
   const start = Date.now();
   try {
@@ -466,4 +475,3 @@ export async function readOnChainRegistryOrder(
   const raw = unwrap(tx.result);
   return { ...raw, status: raw.status.tag };
 }
-
