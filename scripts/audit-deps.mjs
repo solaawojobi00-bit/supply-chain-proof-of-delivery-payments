@@ -18,8 +18,9 @@
 
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
+import { pathToFileURL } from 'node:url';
 
-function extractJson(text) {
+export function extractJson(text) {
   if (!text || typeof text !== 'string') return null;
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
@@ -32,43 +33,47 @@ function extractJson(text) {
   }
 }
 
-function runNpmAudit() {
-  console.log('🔍 Running npm audit on backend dependencies...');
-  const result = spawnSync('npm', ['audit', '--prefix', 'backend', '--json'], {
-    encoding: 'utf-8',
-    shell: true,
-    maxBuffer: 10 * 1024 * 1024,
-  });
-
-  const stdout = result.stdout || '';
-  const stderr = result.stderr || '';
-
-  // Attempt to parse JSON report
+export function parseNpmAuditReport({ stdout = '', stderr = '', error = null, status = 0 } = {}) {
   const parsed = extractJson(stdout) || extractJson(stderr);
 
   if (!parsed) {
-    const errorDetails = (stderr || stdout || result.error?.message || 'Unknown error').trim();
+    const errorDetails = (stderr || stdout || error?.message || 'Unknown error').trim();
     const isOutage =
       /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|502|503|504|network|registry|fetch/i.test(errorDetails);
 
-    if (isOutage || result.error) {
-      console.log('::warning title=npm audit fetch failure::npm audit could not reach the package registry. Passing with warning.');
-      console.warn(`⚠️  npm audit registry fetch error:\n${errorDetails}`);
-      return { status: 'warn-pass', source: 'npm', reason: 'Registry outage / network failure', highOrCritical: [] };
+    if (isOutage || error) {
+      return {
+        status: 'warn-pass',
+        source: 'npm',
+        reason: 'Registry outage / network failure',
+        highOrCritical: [],
+        warning: 'npm audit could not reach the package registry. Passing with warning.',
+        details: errorDetails,
+      };
     }
 
-    console.log('::warning title=npm audit parse failure::Could not parse npm audit JSON output. Passing with warning.');
-    console.warn(`⚠️  Unparseable npm audit output:\n${errorDetails}`);
-    return { status: 'warn-pass', source: 'npm', reason: 'Unparseable JSON output', highOrCritical: [] };
+    return {
+      status: 'warn-pass',
+      source: 'npm',
+      reason: 'Unparseable JSON output',
+      highOrCritical: [],
+      warning: 'Could not parse npm audit JSON output. Passing with warning.',
+      details: errorDetails,
+    };
   }
 
   // Check if npm returned an error payload
   if (parsed.error) {
     const code = parsed.error.code || 'UNKNOWN';
     const summary = parsed.error.summary || parsed.error.detail || JSON.stringify(parsed.error);
-    console.log(`::warning title=npm audit error (${code})::npm audit returned error: ${summary}. Passing with warning.`);
-    console.warn(`⚠️  npm audit error payload: ${code} - ${summary}`);
-    return { status: 'warn-pass', source: 'npm', reason: summary, highOrCritical: [] };
+    return {
+      status: 'warn-pass',
+      source: 'npm',
+      reason: summary,
+      highOrCritical: [],
+      warning: `npm audit returned error: ${summary}. Passing with warning.`,
+      code,
+    };
   }
 
   const highOrCritical = [];
@@ -107,39 +112,38 @@ function runNpmAudit() {
   };
 }
 
-function runCargoAudit() {
-  console.log('🔍 Running cargo audit on workspace & contract dependencies...');
-  const result = spawnSync('cargo', ['audit', '--json'], {
-    encoding: 'utf-8',
-    shell: true,
-    maxBuffer: 10 * 1024 * 1024,
-  });
-
-  const stdout = result.stdout || '';
-  const stderr = result.stderr || '';
-
+export function parseCargoAuditReport({ stdout = '', stderr = '', error = null, status = 0 } = {}) {
   // Check if cargo-audit is missing
   if (
-    result.error?.code === 'ENOENT' ||
+    error?.code === 'ENOENT' ||
     /no such command: `audit`/i.test(stderr) ||
     /no such command: `audit`/i.test(stdout)
   ) {
-    console.log('::warning title=cargo-audit not installed::cargo-audit is not installed. Passing with warning.');
-    console.warn('⚠️  cargo-audit binary not found in environment.');
-    return { status: 'warn-pass', source: 'cargo', reason: 'cargo-audit not installed', highOrCritical: [] };
+    return {
+      status: 'warn-pass',
+      source: 'cargo',
+      reason: 'cargo-audit not installed',
+      highOrCritical: [],
+      warning: 'cargo-audit is not installed. Passing with warning.',
+    };
   }
 
   const parsed = extractJson(stdout) || extractJson(stderr);
 
   if (!parsed) {
-    const errorDetails = (stderr || stdout || result.error?.message || 'Unknown error').trim();
+    const errorDetails = (stderr || stdout || error?.message || 'Unknown error').trim();
     const isOutage =
       /couldn't fetch advisory database|network|fetch|timeout|connection|git/i.test(errorDetails);
 
-    if (isOutage || result.status !== 0) {
-      console.log('::warning title=cargo-audit DB fetch failure::cargo-audit could not fetch advisory database or failed to run. Passing with warning.');
-      console.warn(`⚠️  cargo-audit execution / advisory DB fetch notice:\n${errorDetails}`);
-      return { status: 'warn-pass', source: 'cargo', reason: 'Advisory database fetch / execution warning', highOrCritical: [] };
+    if (isOutage || status !== 0) {
+      return {
+        status: 'warn-pass',
+        source: 'cargo',
+        reason: 'Advisory database fetch / execution warning',
+        highOrCritical: [],
+        warning: 'cargo-audit could not fetch advisory database or failed to run. Passing with warning.',
+        details: errorDetails,
+      };
     }
 
     return { status: 'pass', source: 'cargo', counts: { total: 0 }, highOrCritical: [] };
@@ -192,7 +196,63 @@ function runCargoAudit() {
   };
 }
 
-function main() {
+export function evaluateFindings(npmResult, cargoResult) {
+  const allHighOrCritical = [...(npmResult?.highOrCritical || []), ...(cargoResult?.highOrCritical || [])];
+  const passed = allHighOrCritical.length === 0;
+  return {
+    passed,
+    exitCode: passed ? 0 : 1,
+    highOrCritical: allHighOrCritical,
+  };
+}
+
+export function runNpmAudit() {
+  console.log('🔍 Running npm audit on backend dependencies...');
+  const result = spawnSync('npm', ['audit', '--prefix', 'backend', '--json'], {
+    encoding: 'utf-8',
+    shell: true,
+    maxBuffer: 10 * 1024 * 1024,
+  });
+
+  const parsed = parseNpmAuditReport({
+    stdout: result.stdout || '',
+    stderr: result.stderr || '',
+    error: result.error,
+    status: result.status ?? 0,
+  });
+
+  if (parsed.warning) {
+    console.log(`::warning title=npm audit notice::${parsed.warning}`);
+    if (parsed.details) console.warn(`⚠️  ${parsed.details}`);
+  }
+
+  return parsed;
+}
+
+export function runCargoAudit() {
+  console.log('🔍 Running cargo audit on workspace & contract dependencies...');
+  const result = spawnSync('cargo', ['audit', '--json'], {
+    encoding: 'utf-8',
+    shell: true,
+    maxBuffer: 10 * 1024 * 1024,
+  });
+
+  const parsed = parseCargoAuditReport({
+    stdout: result.stdout || '',
+    stderr: result.stderr || '',
+    error: result.error,
+    status: result.status ?? 0,
+  });
+
+  if (parsed.warning) {
+    console.log(`::warning title=cargo audit notice::${parsed.warning}`);
+    if (parsed.details) console.warn(`⚠️  ${parsed.details}`);
+  }
+
+  return parsed;
+}
+
+export function main() {
   console.log('====================================================');
   console.log('🛡️   Dependency Security Audit Gate (npm + cargo)');
   console.log('====================================================\n');
@@ -224,11 +284,11 @@ function main() {
     console.log(`[cargo:workspace] Status: WARN-PASS (${cargoResult.reason})`);
   }
 
-  const allHighOrCritical = [...npmResult.highOrCritical, ...cargoResult.highOrCritical];
+  const evaluation = evaluateFindings(npmResult, cargoResult);
 
-  if (allHighOrCritical.length > 0) {
+  if (!evaluation.passed) {
     console.log('\n❌ BLOCKING HIGH / CRITICAL VULNERABILITIES FOUND:');
-    for (const vuln of allHighOrCritical) {
+    for (const vuln of evaluation.highOrCritical) {
       console.log(`\n  - [${vuln.ecosystem}] ${vuln.package} (${vuln.severity})`);
       if (vuln.id) console.log(`    Advisory: ${vuln.id}`);
       console.log(`    Title:    ${vuln.title}`);
@@ -248,4 +308,6 @@ function main() {
   process.exit(0);
 }
 
-main();
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  main();
+}
