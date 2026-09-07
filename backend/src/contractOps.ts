@@ -251,6 +251,22 @@ export async function callReclaim(contractId: string, buyer: Keypair): Promise<s
   }
 }
 
+export interface EscrowRegistryContract {
+  create_order(args: {
+    order_id: bigint;
+    buyer: string;
+    seller: string;
+    attestor: string;
+    token: string;
+    amount: bigint;
+    deadline: bigint;
+  }): Promise<AssembledTransaction<ContractResult<null>>>;
+  attest(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
+  claim(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
+  reclaim(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
+  get_order(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<RawOrder & { order_id: bigint }>>>;
+}
+
 export interface OnChainOrder {
   buyer: string;
   seller: string;
@@ -271,3 +287,183 @@ export async function readOnChainOrder(contractId: string): Promise<OnChainOrder
   const raw = unwrap(tx.result);
   return { ...raw, status: raw.status.tag };
 }
+
+async function registryClientFor(contractId: string, signer: Keypair) {
+  return ContractClient.from<EscrowRegistryContract>({
+    ...baseClientOptions,
+    contractId,
+    publicKey: signer.publicKey(),
+    signTransaction: signerFor(signer),
+  });
+}
+
+export async function callRegistryCreateOrder(
+  contractId: string,
+  buyer: Keypair,
+  params: { orderId: bigint; seller: string; attestor: string; token?: string; amount: bigint; deadline: bigint },
+): Promise<string | undefined> {
+  const start = Date.now();
+  try {
+    const client = await registryClientFor(contractId, buyer);
+    const tx = await client.create_order({
+      order_id: params.orderId,
+      buyer: buyer.publicKey(),
+      seller: params.seller,
+      attestor: params.attestor,
+      token: params.token ?? config.paymentTokenContractId,
+      amount: params.amount,
+      deadline: params.deadline,
+    });
+    const sent = await tx.signAndSend();
+    unwrap(sent.result);
+    const txHash = sent.sendTransactionResponse?.hash;
+    const duration = Date.now() - start;
+    logStructured({
+      type: "contract_call",
+      contractId,
+      method: "registry_create_order",
+      orderId: params.orderId.toString(),
+      txHash,
+      duration,
+    });
+    return txHash;
+  } catch (err) {
+    const duration = Date.now() - start;
+    logStructured({
+      level: "error",
+      type: "contract_call",
+      contractId,
+      method: "registry_create_order",
+      orderId: params.orderId.toString(),
+      error: err instanceof Error ? err.message : String(err),
+      duration,
+    });
+    throw err;
+  }
+}
+
+export async function callRegistryAttest(
+  contractId: string,
+  attestor: Keypair,
+  orderId: bigint,
+): Promise<string | undefined> {
+  const start = Date.now();
+  try {
+    const client = await registryClientFor(contractId, attestor);
+    const tx = await client.attest({ order_id: orderId });
+    const sent = await tx.signAndSend();
+    unwrap(sent.result);
+    const txHash = sent.sendTransactionResponse?.hash;
+    const duration = Date.now() - start;
+    logStructured({
+      type: "contract_call",
+      contractId,
+      method: "registry_attest",
+      orderId: orderId.toString(),
+      txHash,
+      duration,
+    });
+    return txHash;
+  } catch (err) {
+    const duration = Date.now() - start;
+    logStructured({
+      level: "error",
+      type: "contract_call",
+      contractId,
+      method: "registry_attest",
+      orderId: orderId.toString(),
+      error: err instanceof Error ? err.message : String(err),
+      duration,
+    });
+    throw err;
+  }
+}
+
+export async function callRegistryClaim(
+  contractId: string,
+  seller: Keypair,
+  orderId: bigint,
+): Promise<string | undefined> {
+  const start = Date.now();
+  try {
+    const client = await registryClientFor(contractId, seller);
+    const tx = await client.claim({ order_id: orderId });
+    const sent = await tx.signAndSend();
+    unwrap(sent.result);
+    const txHash = sent.sendTransactionResponse?.hash;
+    const duration = Date.now() - start;
+    logStructured({
+      type: "contract_call",
+      contractId,
+      method: "registry_claim",
+      orderId: orderId.toString(),
+      txHash,
+      duration,
+    });
+    return txHash;
+  } catch (err) {
+    const duration = Date.now() - start;
+    logStructured({
+      level: "error",
+      type: "contract_call",
+      contractId,
+      method: "registry_claim",
+      orderId: orderId.toString(),
+      error: err instanceof Error ? err.message : String(err),
+      duration,
+    });
+    throw err;
+  }
+}
+
+export async function callRegistryReclaim(
+  contractId: string,
+  buyer: Keypair,
+  orderId: bigint,
+): Promise<string | undefined> {
+  const start = Date.now();
+  try {
+    const client = await registryClientFor(contractId, buyer);
+    const tx = await client.reclaim({ order_id: orderId });
+    const sent = await tx.signAndSend();
+    unwrap(sent.result);
+    const txHash = sent.sendTransactionResponse?.hash;
+    const duration = Date.now() - start;
+    logStructured({
+      type: "contract_call",
+      contractId,
+      method: "registry_reclaim",
+      orderId: orderId.toString(),
+      txHash,
+      duration,
+    });
+    return txHash;
+  } catch (err) {
+    const duration = Date.now() - start;
+    logStructured({
+      level: "error",
+      type: "contract_call",
+      contractId,
+      method: "registry_reclaim",
+      orderId: orderId.toString(),
+      error: err instanceof Error ? err.message : String(err),
+      duration,
+    });
+    throw err;
+  }
+}
+
+export async function readOnChainRegistryOrder(
+  contractId: string,
+  orderId: bigint,
+): Promise<OnChainOrder> {
+  const client = await ContractClient.from<EscrowRegistryContract>({
+    ...baseClientOptions,
+    contractId,
+    publicKey: deployerKeypair.publicKey(),
+  });
+  const tx = await client.get_order({ order_id: orderId });
+  const raw = unwrap(tx.result);
+  return { ...raw, status: raw.status.tag };
+}
+

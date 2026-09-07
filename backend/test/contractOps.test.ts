@@ -30,6 +30,11 @@ import {
   callClaim,
   callReclaim,
   readOnChainOrder,
+  callRegistryCreateOrder,
+  callRegistryAttest,
+  callRegistryClaim,
+  callRegistryReclaim,
+  readOnChainRegistryOrder,
 } from "../src/contractOps.js";
 
 describe("Contract Operations with Logging (contractOps.ts)", () => {
@@ -179,6 +184,107 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
 
     const order = await readOnChainOrder(contractId);
     expect(order.status).toBe("Attested");
+    expect(order.buyer).toBe(buyerKeypair.publicKey());
+  });
+
+  it("callRegistryCreateOrder logs and sends create_order transaction", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const mockCreateOrder = vi.fn().mockResolvedValueOnce({
+      signAndSend: vi.fn().mockResolvedValueOnce({
+        result: { unwrap: () => null },
+        sendTransactionResponse: { hash: "tx-registry-create-hash" },
+      }),
+    });
+    mockFrom.mockResolvedValueOnce({ create_order: mockCreateOrder });
+
+    const hash = await callRegistryCreateOrder(contractId, buyerKeypair, {
+      orderId: 101n,
+      seller: sellerKeypair.publicKey(),
+      attestor: attestorKeypair.publicKey(),
+      amount: 1000n,
+      deadline: 123456n,
+    });
+
+    expect(hash).toBe("tx-registry-create-hash");
+    const logged = consoleSpy.mock.calls.map((c) => JSON.parse(c[0]));
+    const regLog = logged.find((l) => l.type === "contract_call" && l.method === "registry_create_order");
+    expect(regLog).toBeDefined();
+    expect(regLog.orderId).toBe("101");
+  });
+
+  it("callRegistryAttest logs and sends attest transaction", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const mockAttest = vi.fn().mockResolvedValueOnce({
+      signAndSend: vi.fn().mockResolvedValueOnce({
+        result: { unwrap: () => null },
+        sendTransactionResponse: { hash: "tx-registry-attest-hash" },
+      }),
+    });
+    mockFrom.mockResolvedValueOnce({ attest: mockAttest });
+
+    const hash = await callRegistryAttest(contractId, attestorKeypair, 101n);
+    expect(hash).toBe("tx-registry-attest-hash");
+    const logged = consoleSpy.mock.calls.map((c) => JSON.parse(c[0]));
+    const regLog = logged.find((l) => l.type === "contract_call" && l.method === "registry_attest");
+    expect(regLog).toBeDefined();
+    expect(regLog.orderId).toBe("101");
+  });
+
+  it("callRegistryClaim logs and sends claim transaction", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const mockClaim = vi.fn().mockResolvedValueOnce({
+      signAndSend: vi.fn().mockResolvedValueOnce({
+        result: { unwrap: () => null },
+        sendTransactionResponse: { hash: "tx-registry-claim-hash" },
+      }),
+    });
+    mockFrom.mockResolvedValueOnce({ claim: mockClaim });
+
+    const hash = await callRegistryClaim(contractId, sellerKeypair, 101n);
+    expect(hash).toBe("tx-registry-claim-hash");
+    const logged = consoleSpy.mock.calls.map((c) => JSON.parse(c[0]));
+    const regLog = logged.find((l) => l.type === "contract_call" && l.method === "registry_claim");
+    expect(regLog).toBeDefined();
+    expect(regLog.orderId).toBe("101");
+  });
+
+  it("callRegistryReclaim logs and sends reclaim transaction", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const mockReclaim = vi.fn().mockResolvedValueOnce({
+      signAndSend: vi.fn().mockResolvedValueOnce({
+        result: { unwrap: () => null },
+        sendTransactionResponse: { hash: "tx-registry-reclaim-hash" },
+      }),
+    });
+    mockFrom.mockResolvedValueOnce({ reclaim: mockReclaim });
+
+    const hash = await callRegistryReclaim(contractId, buyerKeypair, 101n);
+    expect(hash).toBe("tx-registry-reclaim-hash");
+    const logged = consoleSpy.mock.calls.map((c) => JSON.parse(c[0]));
+    const regLog = logged.find((l) => l.type === "contract_call" && l.method === "registry_reclaim");
+    expect(regLog).toBeDefined();
+    expect(regLog.orderId).toBe("101");
+  });
+
+  it("readOnChainRegistryOrder unwraps and returns order with tag", async () => {
+    const mockGetOrder = vi.fn().mockResolvedValueOnce({
+      result: {
+        unwrap: () => ({
+          order_id: 101n,
+          buyer: buyerKeypair.publicKey(),
+          seller: sellerKeypair.publicKey(),
+          attestor: attestorKeypair.publicKey(),
+          token: "mock-token",
+          amount: 500n,
+          deadline: 9999n,
+          status: { tag: "Created" },
+        }),
+      },
+    });
+    mockFrom.mockResolvedValueOnce({ get_order: mockGetOrder });
+
+    const order = await readOnChainRegistryOrder(contractId, 101n);
+    expect(order.status).toBe("Created");
     expect(order.buyer).toBe(buyerKeypair.publicKey());
   });
 });
