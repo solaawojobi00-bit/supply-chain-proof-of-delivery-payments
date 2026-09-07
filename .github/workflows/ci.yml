@@ -20,10 +20,10 @@ jobs:
           targets: wasm32v1-none
 
       - name: Check contract lockfile
-        run: cargo check --locked --manifest-path contracts/escrow/Cargo.toml
+        run: cargo check --locked --workspace
 
       - name: Run contract unit tests
-        run: cargo test --manifest-path contracts/escrow/Cargo.toml
+        run: cargo test --workspace
 
   backend:
     name: Backend

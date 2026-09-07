@@ -38,12 +38,15 @@ those don't need a third-party attestation event, only time-gated release,
 so Claimable Balances were the right, simpler choice there. Here the
 attestation requirement forces the more expressive tool.
 
-## Contract design (`contracts/escrow`)
+## Contract design (`contracts/escrow` and `contracts/escrow-registry`)
 
-One contract instance per order (deployed fresh per order in Phase 1 —
-simplest to reason about and audit; a factory/registry contract that spawns
-per-order instances is a natural Phase 2 gas/ergonomics optimization, tracked
-as an issue). State:
+The repository supports two contract topologies:
+1. **Per-Order Escrow Instance (`contracts/escrow`)**: Each order is its own deployed WASM contract instance.
+2. **Shared Escrow Registry (`contracts/escrow-registry`)**: A single deployed registry instance manages multiple orders identified by unique `order_id`s in persistent storage.
+
+### 1. Per-Order Contract (`contracts/escrow`)
+
+State:
 
 ```rust
 pub struct Order {
@@ -67,8 +70,44 @@ Methods:
 | `reclaim()` | buyer | `status == Created`, `now >= deadline` | `require_auth(buyer)`; transfers `amount` of `token` back to buyer; `status = Reclaimed` |
 | `get_order()` | anyone | — | read-only state view |
 
-Funds custody: the contract calls the token contract's `transfer` to pull
-funds from the buyer into itself in `create`, and to push funds out in
+### 2. Shared Escrow Registry (`contracts/escrow-registry`)
+
+State:
+
+```rust
+pub struct Order {
+    pub order_id: u64,
+    pub buyer: Address,
+    pub seller: Address,
+    pub attestor: Address,
+    pub token: Address,
+    pub amount: i128,
+    pub deadline: u64,
+    pub status: OrderStatus,
+}
+```
+
+Methods:
+
+| Method | Caller | Precondition | Effect |
+|---|---|---|---|
+| `create_order(order_id, buyer, seller, attestor, token, amount, deadline)` | buyer | `order_id` not exists | `require_auth(buyer)`; transfers `amount` into registry contract; stores `DataKey::Order(order_id)` with status `Created` |
+| `attest(order_id)` | attestor | `status == Created`, `now < deadline` | `require_auth(attestor)`; updates order status to `Attested` |
+| `claim(order_id)` | seller | `status == Attested` | `require_auth(seller)`; transfers funds to seller; updates status to `Claimed` |
+| `reclaim(order_id)` | buyer | `status == Created`, `now >= deadline` | `require_auth(buyer)`; refunds funds to buyer; updates status to `Reclaimed` |
+| `get_order(order_id)` | anyone | `order_id` exists | Returns `Order` state |
+
+### Migration Note & Architectural Trade-offs
+
+- **Per-Order Deployment (`contracts/escrow`)**:
+  - *Pros*: Extreme isolation; contract storage automatically bounds to single order lifecycle.
+  - *Cons*: High deployment fees and latency on every order creation (`ContractClient.deploy`).
+- **Shared Registry (`contracts/escrow-registry`)**:
+  - *Pros*: Zero per-order deployment cost; orders are created via standard contract invocations (`create_order`); faster throughput.
+  - *Cons & Tradeoffs*: Persistent storage expands linearly with order volume. Each entry utilizes Soroban persistent storage with explicit TTL extensions (`extend_ttl`). For production scale, an archival/eviction policy or storage rent fee reclaim mechanism after finalization (`Claimed`/`Reclaimed`) is required to manage long-term state footprint.
+
+Funds custody: both contracts call the token contract's `transfer` to pull
+funds from the buyer into the contract instance in `create`/`create_order`, and to push funds out in
 `claim`/`reclaim`. On testnet the token is the native XLM Stellar Asset
 Contract (SAC), so this works with ordinary funded testnet accounts without
 needing a custom fungible token.

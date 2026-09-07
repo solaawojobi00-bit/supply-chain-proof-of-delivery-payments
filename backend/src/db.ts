@@ -8,6 +8,7 @@ export type OrderStatus = "Created" | "Attested" | "Claimed" | "Reclaimed";
 export interface OrderRow {
   id: string;
   contract_id: string;
+  numeric_id?: number | null;
   buyer_address: string;
   seller_address: string;
   attestor_address: string;
@@ -32,6 +33,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS orders (
     id TEXT PRIMARY KEY,
     contract_id TEXT NOT NULL,
+    numeric_id INTEGER,
     buyer_address TEXT NOT NULL,
     seller_address TEXT NOT NULL,
     attestor_address TEXT NOT NULL,
@@ -61,21 +63,28 @@ try {
   // column already exists
 }
 
+try {
+  db.exec(`ALTER TABLE orders ADD COLUMN numeric_id INTEGER`);
+} catch {
+  // column already exists
+}
+
 export function insertOrder(row: OrderRow): void {
   db.prepare(
     `INSERT INTO orders (
-      id, contract_id, buyer_address, seller_address, attestor_address,
+      id, contract_id, numeric_id, buyer_address, seller_address, attestor_address,
       token_contract_id, amount, deadline, status,
       create_tx_hash, attest_tx_hash, claim_tx_hash, reclaim_tx_hash,
       idempotency_key, request_payload, created_at
     ) VALUES (
-      @id, @contract_id, @buyer_address, @seller_address, @attestor_address,
+      @id, @contract_id, @numeric_id, @buyer_address, @seller_address, @attestor_address,
       @token_contract_id, @amount, @deadline, @status,
       @create_tx_hash, @attest_tx_hash, @claim_tx_hash, @reclaim_tx_hash,
       @idempotency_key, @request_payload, @created_at
     )`,
   ).run({
     ...row,
+    numeric_id: row.numeric_id ?? null,
     idempotency_key: row.idempotency_key ?? null,
     request_payload: row.request_payload ?? null,
   });
