@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import {
   callAttest,
+  callCancel,
   callClaim,
   callCreate,
   callReclaim,
   callRegistryAttest,
+  callRegistryCancel,
   callRegistryClaim,
   callRegistryCreateOrder,
   callRegistryReclaim,
@@ -45,6 +47,8 @@ export function lifecycleLabel(order: OrderRow): string {
       return "claimed";
     case "Reclaimed":
       return "reclaimed";
+    case "Cancelled":
+      return "cancelled";
   }
 }
 
@@ -185,5 +189,37 @@ export async function reclaimOrder(id: string): Promise<OrderRow> {
       ? await callRegistryReclaim(order.contract_id, buyerKeypair, BigInt(order.numeric_id))
       : await callReclaim(order.contract_id, buyerKeypair);
   updateOrderStatus(id, "Reclaimed", "reclaim_tx_hash", txHash ?? "");
+  return requireOrder(id);
+}
+
+export async function cancelOrder(id: string): Promise<OrderRow> {
+  const order = requireOrder(id);
+  if (order.status !== "Created") {
+    throw new HttpError(409, `Order is ${order.status}; can only cancel an order that is Created`);
+  }
+  const buyerSigner = findLocalSigner(order.buyer_address);
+  if (!buyerSigner) {
+    throw new HttpError(
+      400,
+      "No local signer for this buyer address. Phase 1 backend requires local signers for mutual cancellation.",
+    );
+  }
+  const sellerSigner = findLocalSigner(order.seller_address);
+  if (!sellerSigner) {
+    throw new HttpError(
+      400,
+      "No local signer for this seller address. Phase 1 backend requires local signers for mutual cancellation.",
+    );
+  }
+  const txHash =
+    order.numeric_id != null && order.contract_id === config.escrowRegistryContractId
+      ? await callRegistryCancel(
+          order.contract_id,
+          buyerSigner,
+          sellerSigner,
+          BigInt(order.numeric_id),
+        )
+      : await callCancel(order.contract_id, buyerSigner, sellerSigner);
+  updateOrderStatus(id, "Cancelled", "cancel_tx_hash", txHash ?? "");
   return requireOrder(id);
 }

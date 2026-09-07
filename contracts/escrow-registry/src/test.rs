@@ -262,3 +262,138 @@ fn test_registry_invalid_parameters() {
     );
     assert_eq!(res2, Err(Ok(Error::DeadlineNotInFuture)));
 }
+
+#[test]
+fn test_registry_mutual_cancel_success() {
+    let s = setup();
+    let order_id: u64 = 801;
+    let deadline = s.env.ledger().timestamp() + 1000;
+
+    s.client.create_order(
+        &order_id,
+        &s.buyer,
+        &s.seller,
+        &s.attestor,
+        &s.token,
+        &s.amount,
+        &deadline,
+    );
+
+    let order = s.client.get_order(&order_id);
+    assert_eq!(order.status, OrderStatus::Created);
+    assert_eq!(s.token_client.balance(&s.contract_id), s.amount);
+
+    s.client.cancel(&order_id);
+    let order = s.client.get_order(&order_id);
+    assert_eq!(order.status, OrderStatus::Cancelled);
+    assert_eq!(s.token_client.balance(&s.buyer), s.amount * 10);
+    assert_eq!(s.token_client.balance(&s.contract_id), 0);
+}
+
+#[test]
+fn test_registry_cancel_after_attestation_fails() {
+    let s = setup();
+    let order_id: u64 = 802;
+    let deadline = s.env.ledger().timestamp() + 1000;
+
+    s.client.create_order(
+        &order_id,
+        &s.buyer,
+        &s.seller,
+        &s.attestor,
+        &s.token,
+        &s.amount,
+        &deadline,
+    );
+
+    s.client.attest(&order_id);
+    let res = s.client.try_cancel(&order_id);
+    assert_eq!(res, Err(Ok(Error::WrongStatus)));
+}
+
+#[test]
+fn test_registry_cancel_requires_both_auths() {
+    use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+    use soroban_sdk::IntoVal;
+
+    let env = Env::default();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let attestor = Address::generate(&env);
+
+    let (token, asset_client, _token_client) = create_token(&env, &admin);
+    let amount: i128 = 1_000_000_000;
+
+    env.mock_all_auths();
+    asset_client.mint(&buyer, &(amount * 10));
+
+    let contract_id = env.register(EscrowRegistryContract, ());
+    let client = EscrowRegistryContractClient::new(&env, &contract_id);
+    let deadline = env.ledger().timestamp() + 1000;
+    let order_id: u64 = 803;
+
+    client.create_order(
+        &order_id,
+        &buyer,
+        &seller,
+        &attestor,
+        &token,
+        &amount,
+        &deadline,
+    );
+
+    // Mock ONLY buyer authorization
+    env.mock_auths(&[MockAuth {
+        address: &buyer,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "cancel",
+            args: (order_id,).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    let res = client.try_cancel(&order_id);
+    assert!(res.is_err());
+
+    // Mock ONLY seller authorization
+    env.mock_auths(&[MockAuth {
+        address: &seller,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "cancel",
+            args: (order_id,).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    let res = client.try_cancel(&order_id);
+    assert!(res.is_err());
+
+    // Mock BOTH buyer and seller authorization
+    env.mock_auths(&[
+        MockAuth {
+            address: &buyer,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "cancel",
+                args: (order_id,).into_val(&env),
+                sub_invokes: &[],
+            },
+        },
+        MockAuth {
+            address: &seller,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "cancel",
+                args: (order_id,).into_val(&env),
+                sub_invokes: &[],
+            },
+        },
+    ]);
+
+    let res = client.try_cancel(&order_id);
+    assert!(res.is_ok());
+    assert_eq!(client.get_order(&order_id).status, OrderStatus::Cancelled);
+}

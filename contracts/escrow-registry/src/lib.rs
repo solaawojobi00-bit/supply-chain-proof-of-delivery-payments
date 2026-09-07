@@ -9,6 +9,7 @@ pub enum OrderStatus {
     Attested,
     Claimed,
     Reclaimed,
+    Cancelled,
 }
 
 #[contracttype]
@@ -164,6 +165,33 @@ impl EscrowRegistryContract {
         token_client.transfer(&env.current_contract_address(), &order.buyer, &order.amount);
 
         order.status = OrderStatus::Reclaimed;
+        env.storage().persistent().set(&key, &order);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, STORAGE_TTL_THRESHOLD, STORAGE_TTL_LEDGERS);
+
+        Ok(())
+    }
+
+    /// Buyer and seller mutually agree to cancel an order before attestation.
+    /// Requires authorization from both `buyer` and `seller`.
+    /// Valid only while `status == Created`.
+    /// Returns funds to the buyer and transitions status to `Cancelled`.
+    pub fn cancel(env: Env, order_id: u64) -> Result<(), Error> {
+        let key = DataKey::Order(order_id);
+        let mut order = Self::load(&env, order_id)?;
+
+        if order.status != OrderStatus::Created {
+            return Err(Error::WrongStatus);
+        }
+
+        order.buyer.require_auth();
+        order.seller.require_auth();
+
+        let token_client = token::Client::new(&env, &order.token);
+        token_client.transfer(&env.current_contract_address(), &order.buyer, &order.amount);
+
+        order.status = OrderStatus::Cancelled;
         env.storage().persistent().set(&key, &order);
         env.storage()
             .persistent()

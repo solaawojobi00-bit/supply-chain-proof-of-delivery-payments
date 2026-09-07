@@ -44,6 +44,7 @@ interface EscrowContract {
   attest(): Promise<AssembledTransaction<ContractResult<null>>>;
   claim(): Promise<AssembledTransaction<ContractResult<null>>>;
   reclaim(): Promise<AssembledTransaction<ContractResult<null>>>;
+  cancel(): Promise<AssembledTransaction<ContractResult<null>>>;
   get_order(): Promise<AssembledTransaction<ContractResult<RawOrder>>>;
 }
 
@@ -251,6 +252,47 @@ export async function callReclaim(contractId: string, buyer: Keypair): Promise<s
   }
 }
 
+export async function callCancel(
+  contractId: string,
+  buyer: Keypair,
+  seller: Keypair,
+): Promise<string | undefined> {
+  const start = Date.now();
+  try {
+    const client = await clientFor(contractId, buyer);
+    const tx = await client.cancel();
+    if (tx.needsNonInvokerSigningBy().includes(seller.publicKey())) {
+      await tx.signAuthEntries({
+        signAuthEntry: signerFor(seller),
+        address: seller.publicKey(),
+      });
+    }
+    const sent = await tx.signAndSend();
+    unwrap(sent.result);
+    const txHash = sent.sendTransactionResponse?.hash;
+    const duration = Date.now() - start;
+    logStructured({
+      type: "contract_call",
+      contractId,
+      method: "cancel",
+      txHash,
+      duration,
+    });
+    return txHash;
+  } catch (err) {
+    const duration = Date.now() - start;
+    logStructured({
+      level: "error",
+      type: "contract_call",
+      contractId,
+      method: "cancel",
+      error: err instanceof Error ? err.message : String(err),
+      duration,
+    });
+    throw err;
+  }
+}
+
 export interface EscrowRegistryContract {
   create_order(args: {
     order_id: bigint;
@@ -264,6 +306,7 @@ export interface EscrowRegistryContract {
   attest(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
   claim(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
   reclaim(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
+  cancel(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
   get_order(args: {
     order_id: bigint;
   }): Promise<AssembledTransaction<ContractResult<RawOrder & { order_id: bigint }>>>;
@@ -454,6 +497,50 @@ export async function callRegistryReclaim(
       type: "contract_call",
       contractId,
       method: "registry_reclaim",
+      orderId: orderId.toString(),
+      error: err instanceof Error ? err.message : String(err),
+      duration,
+    });
+    throw err;
+  }
+}
+
+export async function callRegistryCancel(
+  contractId: string,
+  buyer: Keypair,
+  seller: Keypair,
+  orderId: bigint,
+): Promise<string | undefined> {
+  const start = Date.now();
+  try {
+    const client = await registryClientFor(contractId, buyer);
+    const tx = await client.cancel({ order_id: orderId });
+    if (tx.needsNonInvokerSigningBy().includes(seller.publicKey())) {
+      await tx.signAuthEntries({
+        signAuthEntry: signerFor(seller),
+        address: seller.publicKey(),
+      });
+    }
+    const sent = await tx.signAndSend();
+    unwrap(sent.result);
+    const txHash = sent.sendTransactionResponse?.hash;
+    const duration = Date.now() - start;
+    logStructured({
+      type: "contract_call",
+      contractId,
+      method: "registry_cancel",
+      orderId: orderId.toString(),
+      txHash,
+      duration,
+    });
+    return txHash;
+  } catch (err) {
+    const duration = Date.now() - start;
+    logStructured({
+      level: "error",
+      type: "contract_call",
+      contractId,
+      method: "registry_cancel",
       orderId: orderId.toString(),
       error: err instanceof Error ? err.message : String(err),
       duration,
