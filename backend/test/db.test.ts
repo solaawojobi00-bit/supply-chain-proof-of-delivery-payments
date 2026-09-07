@@ -91,19 +91,19 @@ describe("Database Operations (db.ts)", () => {
       attest_tx_hash: null,
       claim_tx_hash: null,
       reclaim_tx_hash: null,
-      idempotency_key: "my-idempotency-key-123",
+      idempotency_key: "test-uuid-idem-001",
       request_payload: JSON.stringify({ amount: "30000000" }),
       created_at: new Date().toISOString(),
     };
 
     insertOrder(rowIdemp);
-    const retrieved = getOrderByIdempotencyKey("my-idempotency-key-123");
+    const retrieved = getOrderByIdempotencyKey("test-uuid-idem-001");
     expect(retrieved).toBeDefined();
     expect(retrieved?.id).toBe("test-order-idemp");
-    expect(retrieved?.idempotency_key).toBe("my-idempotency-key-123");
+    expect(retrieved?.idempotency_key).toBe("test-uuid-idem-001");
     expect(retrieved?.request_payload).toBe(JSON.stringify({ amount: "30000000" }));
 
-    const nonexistent = getOrderByIdempotencyKey("non-existent-key");
+    const nonexistent = getOrderByIdempotencyKey("non-existent-token");
     expect(nonexistent).toBeUndefined();
   });
 });

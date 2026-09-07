@@ -172,7 +172,7 @@ describe("API Routes (routes.ts)", () => {
 
   it("POST /orders with Idempotency-Key returns 201 on first request and 200 on identical repeat request", async () => {
     const deadline = Math.floor(Date.now() / 1000) + 3600;
-    const idempotencyKey = "idemp-key-test-1";
+    const idempotencyKey = "test-uuid-idem-alpha";
     const body = {
       sellerAddress: sellerKeypair.publicKey(),
       attestorAddress: attestorKeypair.publicKey(),
@@ -209,7 +209,7 @@ describe("API Routes (routes.ts)", () => {
 
   it("POST /orders with same Idempotency-Key but different body returns 409 Conflict", async () => {
     const deadline = Math.floor(Date.now() / 1000) + 3600;
-    const idempotencyKey = "idemp-key-test-conflict";
+    const idempotencyKey = "test-uuid-idem-conflict";
     const originalBody = {
       sellerAddress: sellerKeypair.publicKey(),
       attestorAddress: attestorKeypair.publicKey(),
