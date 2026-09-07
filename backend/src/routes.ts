@@ -10,6 +10,7 @@ import {
   reclaimOrder,
 } from "./orderService.js";
 import type { OrderRow } from "./db.js";
+import { createOrderSchema, formatZodError } from "./schemas.js";
 
 export const router = Router();
 
@@ -48,13 +49,11 @@ function asyncHandler(fn: (req: Request, res: Response) => Promise<void>) {
 router.post(
   "/orders",
   asyncHandler(async (req, res) => {
-    const { sellerAddress, attestorAddress, amountStroops, deadlineSeconds } = req.body ?? {};
-    if (!sellerAddress || !attestorAddress || !amountStroops || !deadlineSeconds) {
-      throw new HttpError(
-        400,
-        "sellerAddress, attestorAddress, amountStroops, and deadlineSeconds are required",
-      );
+    const parseResult = createOrderSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      throw new HttpError(400, formatZodError(parseResult.error));
     }
+    const { sellerAddress, attestorAddress, amountStroops, deadlineSeconds } = parseResult.data;
     const order = await createOrder({
       sellerAddress,
       attestorAddress,
