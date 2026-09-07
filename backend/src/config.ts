@@ -19,6 +19,11 @@ export const config = {
   buyerSecretKey: requireEnv("BUYER_SECRET_KEY"),
   sellerSecretKey: requireEnv("SELLER_SECRET_KEY"),
   attestorSecretKey: requireEnv("ATTESTOR_SECRET_KEY"),
+  buyerApiKey: process.env.BUYER_API_KEY ?? "demo-buyer-token",
+  sellerApiKey: process.env.SELLER_API_KEY ?? "demo-seller-token",
+  attestorApiKey: process.env.ATTESTOR_API_KEY ?? "demo-attestor-token",
+  arbiterApiKey: process.env.ARBITER_API_KEY ?? "demo-arbiter-token",
+  adminApiKey: process.env.ADMIN_API_KEY ?? "demo-admin-token",
   port: Number(process.env.PORT ?? 3000),
   dbPath: process.env.DB_PATH ?? "./data/orders.sqlite",
 };

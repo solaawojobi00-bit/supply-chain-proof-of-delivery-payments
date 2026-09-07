@@ -173,8 +173,12 @@ backend's job is:
    from submitted tx results) to answer status queries.
 6. Expose everything over a small REST API (Express).
 
-Signing keys: the backend supports both server-held demo keys (for automated testing and script demos) and **client-side wallet signing** (SEP-43 smart wallets / Freighter browser extension):
+Signing keys & Authentication: the backend supports both server-held demo keys and client-side wallet signing, combined with lightweight **role-based API authentication**:
 
+- **Role API Authentication**: Protects all mutating endpoints at the HTTP boundary. Callers provide credentials via `Authorization: Bearer <token>` or `x-api-key: <token>`.
+  - **Order-Scoped Tokens**: Unique tokens for `buyer`, `seller`, `attestor`, and `arbiter` issued upon order creation (`POST /orders`).
+  - **Environment Role Keys**: Static fallback tokens configured via `.env` (`BUYER_API_KEY`, `SELLER_API_KEY`, `ATTESTOR_API_KEY`, `ARBITER_API_KEY`, `ADMIN_API_KEY`).
+  - **Enforcement**: Role mismatch results in `403 Forbidden`; missing/invalid credentials result in `401 Unauthorized`.
 - **Server-Held Keys**: Configured in `.env` (`BUYER_SECRET_KEY`, `SELLER_SECRET_KEY`, `ATTESTOR_SECRET_KEY`, `ARBITER_SECRET_KEY`) for seamless CLI demo execution.
 - **Client-Side Signing**: When invoked with `?unsigned=true` (or via `POST /orders/:id/build-tx`), the backend builds and simulates an unsigned transaction XDR envelope using the caller's public key. The client signs with Freighter or an SEP-43 wallet and submits the signed XDR to `POST /tx/submit` or `POST /orders/:id/submit`.
 

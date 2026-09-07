@@ -160,24 +160,63 @@ In addition to backend-held demo keypairs, the backend fully supports non-custod
      -d '{"signedXdr": "AAAAAgAAAAA...", "orderId": 1, "action": "attest"}'
    ```
 
+### Per-Role API Authentication
+
+Mutating endpoints require authentication corresponding to the authorized party's role (`buyer`, `seller`, `attestor`, `arbiter`):
+
+1. **Authentication Headers**:
+   Supply either a Bearer token or `x-api-key` header:
+   ```bash
+   Authorization: Bearer <token>
+   # or
+   x-api-key: <token>
+   ```
+
+2. **Order-Scoped Tokens**:
+   When an order is created (`POST /orders`), the response provides unique order-scoped tokens:
+   ```json
+   {
+     "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+     "tokens": {
+       "buyer": "buyer_...",
+       "seller": "seller_...",
+       "attestor": "attestor_...",
+       "arbiter": "arbiter_..."
+     }
+   }
+   ```
+
+3. **Global Configured Role Keys**:
+   Configured in `.env` (`BUYER_API_KEY`, `SELLER_API_KEY`, `ATTESTOR_API_KEY`, `ARBITER_API_KEY`, `ADMIN_API_KEY`) for backend services and test runners.
+
+4. **Role Requirements Matrix**:
+   - `POST /orders/:id/attest`: Requires `attestor` credential.
+   - `POST /orders/:id/claim`: Requires `seller` credential.
+   - `POST /orders/:id/reclaim`: Requires `buyer` credential.
+   - `POST /orders/:id/cancel`: Requires `buyer` or `seller` credential.
+   - `POST /orders/:id/dispute`: Requires `buyer` credential.
+   - `POST /orders/:id/resolve`: Requires `arbiter` credential.
+   - `POST /orders/:id/build-tx`: Requires role credential matching requested `action`.
+   - *Mismatched credentials receive `403 Forbidden`; missing credentials receive `401 Unauthorized`.*
+
 ## API
 
 A complete machine-readable OpenAPI 3.0 specification is available at [`backend/openapi.yaml`](backend/openapi.yaml).
 
-| Endpoint                    | Effect                                                                                                                                                                                                         |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /orders`              | Create an order: `{ buyerAddress?, sellerAddress, attestorAddress?, attestors?: string[], threshold?: number, arbiterAddress?, amountStroops, deadlineSeconds, tokenContractId? }` (supports `?unsigned=true`) |
-| `GET /orders`               | List all orders                                                                                                                                                                                                |
-| `GET /orders/:id`           | Order status, including a live on-chain read                                                                                                                                                                   |
-| `POST /orders/:id/attest`   | Authorized attestor confirms delivery (optional body: `{ attestorAddress }`; supports `?unsigned=true`)                                                                                                        |
-| `POST /orders/:id/claim`    | Seller claims the escrowed funds (supports `?unsigned=true`)                                                                                                                                                   |
-| `POST /orders/:id/reclaim`  | Buyer reclaims funds once the deadline has passed (supports `?unsigned=true`)                                                                                                                                  |
-| `POST /orders/:id/cancel`   | Buyer and seller mutually cancel order before attestation, refunding buyer (supports `?unsigned=true`)                                                                                                         |
-| `POST /orders/:id/dispute`  | Buyer disputes an attested order before claim, freezing the funds in Disputed state (supports `?unsigned=true`)                                                                                                |
-| `POST /orders/:id/resolve`  | Designated arbiter resolves a dispute (`{ releaseToSeller: boolean }`), paying the seller or refunding the buyer (supports `?unsigned=true`)                                                                   |
-| `POST /orders/:id/build-tx` | Build an unsigned transaction envelope for any action (`{ action: "attest"                                                                                                                                     | "claim" | "reclaim" | "cancel" | "dispute" | "resolve", ... }`) |
-| `POST /orders/:id/submit`   | Submit a signed transaction XDR for a specific order and update status                                                                                                                                         |
-| `POST /tx/submit`           | Submit an arbitrary signed transaction XDR to the Soroban network and sync order state                                                                                                                         |
+| Endpoint                    | Required Role           | Effect                                                                                                                                                                                                         |
+| --------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /orders`              | Public / Buyer          | Create an order: `{ buyerAddress?, sellerAddress, attestorAddress?, attestors?: string[], threshold?: number, arbiterAddress?, amountStroops, deadlineSeconds, tokenContractId? }` (supports `?unsigned=true`) |
+| `GET /orders`               | Public                  | List all orders                                                                                                                                                                                                |
+| `GET /orders/:id`           | Public                  | Order status, including a live on-chain read                                                                                                                                                                   |
+| `POST /orders/:id/attest`   | `attestor`              | Authorized attestor confirms delivery (optional body: `{ attestorAddress }`; supports `?unsigned=true`)                                                                                                        |
+| `POST /orders/:id/claim`    | `seller`                | Seller claims the escrowed funds (supports `?unsigned=true`)                                                                                                                                                   |
+| `POST /orders/:id/reclaim`  | `buyer`                 | Buyer reclaims funds once the deadline has passed (supports `?unsigned=true`)                                                                                                                                  |
+| `POST /orders/:id/cancel`   | `buyer` / `seller`      | Buyer and seller mutually cancel order before attestation, refunding buyer (supports `?unsigned=true`)                                                                                                         |
+| `POST /orders/:id/dispute`  | `buyer`                 | Buyer disputes an attested order before claim, freezing the funds in Disputed state (supports `?unsigned=true`)                                                                                                |
+| `POST /orders/:id/resolve`  | `arbiter`               | Designated arbiter resolves a dispute (`{ releaseToSeller: boolean }`), paying the seller or refunding the buyer (supports `?unsigned=true`)                                                                   |
+| `POST /orders/:id/build-tx` | Action Role (`attestor` / `seller` / `buyer` / `arbiter`) | Build an unsigned transaction envelope for any action                                                                                                                                                        |
+| `POST /orders/:id/submit`   | Any order party         | Submit a signed transaction XDR for a specific order and update status                                                                                                                                         |
+| `POST /tx/submit`           | Any order party / Public| Submit an arbitrary signed transaction XDR to the Soroban network and sync order state                                                                                                                         |
 
 ## Development & Quality Checks
 

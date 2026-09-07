@@ -1,5 +1,6 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { HttpError } from "./httpError.js";
+import { verifyRole } from "./auth.js";
 import {
   attestOrder,
   buildUnsignedAttest,
@@ -14,6 +15,7 @@ import {
   createOrder,
   disputeOrder,
   getAllOrders,
+  getOrderById,
   getOrderWithChainState,
   lifecycleLabel,
   reclaimOrder,
@@ -57,6 +59,12 @@ function serialize(order: OrderRow) {
     deadline: order.deadline,
     status: order.status,
     lifecycle: lifecycleLabel(order),
+    tokens: {
+      buyer: order.buyer_token ?? null,
+      seller: order.seller_token ?? null,
+      attestor: order.attestor_token ?? null,
+      arbiter: order.arbiter_token ?? null,
+    },
     txHashes: {
       create: order.create_tx_hash,
       attest: order.attest_tx_hash,
@@ -206,6 +214,10 @@ router.get(
 router.post(
   "/orders/:id/attest",
   asyncHandler(async (req, res) => {
+    const orderId = String(req.params.id);
+    const order = getOrderById(orderId);
+    verifyRole(req, order, "attestor");
+
     let attestorAddress: string | undefined;
     if (req.body && Object.keys(req.body).length > 0) {
       const parseResult = attestOrderSchema.safeParse(req.body);
@@ -216,74 +228,94 @@ router.post(
     }
 
     if (isUnsignedRequested(req)) {
-      const result = await buildUnsignedAttest(String(req.params.id), attestorAddress);
+      const result = await buildUnsignedAttest(orderId, attestorAddress);
       res.json(result);
       return;
     }
 
-    res.json(serialize(await attestOrder(String(req.params.id), attestorAddress)));
+    res.json(serialize(await attestOrder(orderId, attestorAddress)));
   }),
 );
 
 router.post(
   "/orders/:id/claim",
   asyncHandler(async (req, res) => {
+    const orderId = String(req.params.id);
+    const order = getOrderById(orderId);
+    verifyRole(req, order, "seller");
+
     if (isUnsignedRequested(req)) {
-      const result = await buildUnsignedClaim(String(req.params.id));
+      const result = await buildUnsignedClaim(orderId);
       res.json(result);
       return;
     }
-    res.json(serialize(await claimOrder(String(req.params.id))));
+    res.json(serialize(await claimOrder(orderId)));
   }),
 );
 
 router.post(
   "/orders/:id/reclaim",
   asyncHandler(async (req, res) => {
+    const orderId = String(req.params.id);
+    const order = getOrderById(orderId);
+    verifyRole(req, order, "buyer");
+
     if (isUnsignedRequested(req)) {
-      const result = await buildUnsignedReclaim(String(req.params.id));
+      const result = await buildUnsignedReclaim(orderId);
       res.json(result);
       return;
     }
-    res.json(serialize(await reclaimOrder(String(req.params.id))));
+    res.json(serialize(await reclaimOrder(orderId)));
   }),
 );
 
 router.post(
   "/orders/:id/cancel",
   asyncHandler(async (req, res) => {
+    const orderId = String(req.params.id);
+    const order = getOrderById(orderId);
+    verifyRole(req, order, ["buyer", "seller"]);
+
     if (isUnsignedRequested(req)) {
       const callerAddress =
         typeof req.body === "object" && req.body && typeof req.body.callerAddress === "string"
           ? req.body.callerAddress
           : undefined;
-      const result = await buildUnsignedCancel(String(req.params.id), callerAddress);
+      const result = await buildUnsignedCancel(orderId, callerAddress);
       res.json(result);
       return;
     }
-    res.json(serialize(await cancelOrder(String(req.params.id))));
+    res.json(serialize(await cancelOrder(orderId)));
   }),
 );
 
 router.post(
   "/orders/:id/dispute",
   asyncHandler(async (req, res) => {
+    const orderId = String(req.params.id);
+    const order = getOrderById(orderId);
+    verifyRole(req, order, "buyer");
+
     if (isUnsignedRequested(req)) {
       const buyerAddress =
         typeof req.body === "object" && req.body && typeof req.body.buyerAddress === "string"
           ? req.body.buyerAddress
           : undefined;
-      const result = await buildUnsignedDispute(String(req.params.id), buyerAddress);
+      const result = await buildUnsignedDispute(orderId, buyerAddress);
       res.json(result);
       return;
     }
-    res.json(serialize(await disputeOrder(String(req.params.id))));
+    res.json(serialize(await disputeOrder(orderId)));
   }),
 );
 
 router.post(
   "/orders/:id/resolve",
   asyncHandler(async (req, res) => {
+    const orderId = String(req.params.id);
+    const order = getOrderById(orderId);
+    verifyRole(req, order, "arbiter");
+
     const parseResult = resolveDisputeSchema.safeParse(req.body);
     if (!parseResult.success) {
       throw new HttpError(400, formatZodError(parseResult.error));
@@ -295,7 +327,7 @@ router.post(
           ? req.body.arbiterAddress
           : undefined;
       const result = await buildUnsignedResolve(
-        String(req.params.id),
+        orderId,
         parseResult.data.releaseToSeller,
         arbiterAddress,
       );
@@ -303,39 +335,45 @@ router.post(
       return;
     }
 
-    res.json(
-      serialize(await resolveDispute(String(req.params.id), parseResult.data.releaseToSeller)),
-    );
+    res.json(serialize(await resolveDispute(orderId, parseResult.data.releaseToSeller)));
   }),
 );
 
 router.post(
   "/orders/:id/build-tx",
   asyncHandler(async (req, res) => {
+    const orderId = String(req.params.id);
+    const order = getOrderById(orderId);
+
     const parseResult = buildTxSchema.safeParse(req.body);
     if (!parseResult.success) {
       throw new HttpError(400, formatZodError(parseResult.error));
     }
-    const orderId = String(req.params.id);
     const { action, attestorAddress, callerAddress, releaseToSeller } = parseResult.data;
 
     switch (action) {
       case "attest":
+        verifyRole(req, order, "attestor");
         res.json(await buildUnsignedAttest(orderId, attestorAddress));
         break;
       case "claim":
+        verifyRole(req, order, "seller");
         res.json(await buildUnsignedClaim(orderId));
         break;
       case "reclaim":
+        verifyRole(req, order, "buyer");
         res.json(await buildUnsignedReclaim(orderId));
         break;
       case "cancel":
+        verifyRole(req, order, ["buyer", "seller"]);
         res.json(await buildUnsignedCancel(orderId, callerAddress));
         break;
       case "dispute":
+        verifyRole(req, order, "buyer");
         res.json(await buildUnsignedDispute(orderId, callerAddress));
         break;
       case "resolve":
+        verifyRole(req, order, "arbiter");
         if (releaseToSeller === undefined) {
           throw new HttpError(400, "releaseToSeller is required when action is resolve");
         }
@@ -353,6 +391,23 @@ router.post(
       throw new HttpError(400, formatZodError(parseResult.error));
     }
     const orderId = parseResult.data.orderId ?? (req.params.id ? String(req.params.id) : undefined);
+    if (orderId) {
+      const order = getOrderById(orderId);
+      const action = parseResult.data.action;
+      if (action === "attest") {
+        verifyRole(req, order, "attestor");
+      } else if (action === "claim") {
+        verifyRole(req, order, "seller");
+      } else if (action === "reclaim" || action === "dispute") {
+        verifyRole(req, order, "buyer");
+      } else if (action === "cancel") {
+        verifyRole(req, order, ["buyer", "seller"]);
+      } else if (action === "resolve") {
+        verifyRole(req, order, "arbiter");
+      } else {
+        verifyRole(req, order, ["buyer", "seller", "attestor", "arbiter"]);
+      }
+    }
     const result = await submitSignedTx(
       parseResult.data.signedXdr,
       orderId,

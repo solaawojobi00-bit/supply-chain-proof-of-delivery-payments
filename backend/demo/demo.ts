@@ -10,16 +10,33 @@ import { attestorKeypair, sellerKeypair } from "../src/keys.js";
 
 const BASE_URL = `http://localhost:${config.port}`;
 
+interface OrderTokens {
+  buyer?: string;
+  seller?: string;
+  attestor?: string;
+  arbiter?: string;
+}
+
 interface OrderResponse {
   id: string;
   status: string;
+  tokens?: OrderTokens;
   [key: string]: unknown;
 }
 
-async function api(method: string, path: string, body?: unknown): Promise<OrderResponse> {
+async function api(
+  method: string,
+  path: string,
+  body?: unknown,
+  token?: string,
+): Promise<OrderResponse> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   const json = await res.json();
@@ -61,11 +78,13 @@ async function runClaimPath() {
   log("1. Order created (funds escrowed on testnet)", order);
   assertStatus(order, "Created");
 
-  const attested = await api("POST", `/orders/${order.id}/attest`);
+  const attestorToken = order.tokens?.attestor ?? config.attestorApiKey;
+  const attested = await api("POST", `/orders/${order.id}/attest`, undefined, attestorToken);
   log("2. Attestor confirmed delivery", attested);
   assertStatus(attested, "Attested");
 
-  const claimed = await api("POST", `/orders/${order.id}/claim`);
+  const sellerToken = order.tokens?.seller ?? config.sellerApiKey;
+  const claimed = await api("POST", `/orders/${order.id}/claim`, undefined, sellerToken);
   log("3. Seller claimed the escrowed funds", claimed);
   assertStatus(claimed, "Claimed");
 
@@ -92,7 +111,8 @@ async function runReclaimPath() {
   );
   await sleep(Math.max(waitMs, 0));
 
-  const reclaimed = await api("POST", `/orders/${order.id}/reclaim`);
+  const buyerToken = order.tokens?.buyer ?? config.buyerApiKey;
+  const reclaimed = await api("POST", `/orders/${order.id}/reclaim`, undefined, buyerToken);
   log("2. Buyer reclaimed the funds after the deadline passed", reclaimed);
   assertStatus(reclaimed, "Reclaimed");
 

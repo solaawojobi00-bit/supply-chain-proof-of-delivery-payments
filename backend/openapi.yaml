@@ -684,6 +684,8 @@ components:
             - cancelled
           description: High-level human-readable lifecycle label
           example: "in-transit"
+        tokens:
+          $ref: "#/components/schemas/OrderTokens"
         txHashes:
           $ref: "#/components/schemas/OrderTxHashes"
         createdAt:
@@ -691,6 +693,30 @@ components:
           format: date-time
           description: ISO timestamp of order creation
           example: "2026-09-07T12:00:00.000Z"
+
+    OrderTokens:
+      type: object
+      properties:
+        buyer:
+          type: string
+          nullable: true
+          description: Order-scoped API token for the buyer role
+          example: "buyer_9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+        seller:
+          type: string
+          nullable: true
+          description: Order-scoped API token for the seller role
+          example: "seller_9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+        attestor:
+          type: string
+          nullable: true
+          description: Order-scoped API token for the attestor role
+          example: "attestor_9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+        arbiter:
+          type: string
+          nullable: true
+          description: Order-scoped API token for the arbiter role
+          example: "arbiter_9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
 
     OnChainState:
       type: object
@@ -866,3 +892,14 @@ components:
           example: "SUCCESS"
         order:
           $ref: "#/components/schemas/Order"
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Order-scoped role token or configured role API key
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: API key passed in x-api-key header

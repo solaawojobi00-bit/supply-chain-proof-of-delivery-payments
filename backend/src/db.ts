@@ -28,6 +28,10 @@ export interface OrderRow {
   cancel_tx_hash?: string | null;
   dispute_tx_hash?: string | null;
   resolve_tx_hash?: string | null;
+  buyer_token?: string | null;
+  seller_token?: string | null;
+  attestor_token?: string | null;
+  arbiter_token?: string | null;
   idempotency_key?: string | null;
   request_payload?: string | null;
   created_at: string;
@@ -60,6 +64,10 @@ db.exec(`
     cancel_tx_hash TEXT,
     dispute_tx_hash TEXT,
     resolve_tx_hash TEXT,
+    buyer_token TEXT,
+    seller_token TEXT,
+    attestor_token TEXT,
+    arbiter_token TEXT,
     idempotency_key TEXT UNIQUE,
     request_payload TEXT,
     created_at TEXT NOT NULL
@@ -126,6 +134,30 @@ try {
   // column already exists
 }
 
+try {
+  db.exec(`ALTER TABLE orders ADD COLUMN buyer_token TEXT`);
+} catch {
+  // column already exists
+}
+
+try {
+  db.exec(`ALTER TABLE orders ADD COLUMN seller_token TEXT`);
+} catch {
+  // column already exists
+}
+
+try {
+  db.exec(`ALTER TABLE orders ADD COLUMN attestor_token TEXT`);
+} catch {
+  // column already exists
+}
+
+try {
+  db.exec(`ALTER TABLE orders ADD COLUMN arbiter_token TEXT`);
+} catch {
+  // column already exists
+}
+
 export function insertOrder(row: OrderRow): void {
   db.prepare(
     `INSERT INTO orders (
@@ -134,6 +166,7 @@ export function insertOrder(row: OrderRow): void {
       token_contract_id, amount, deadline, status,
       create_tx_hash, attest_tx_hash, claim_tx_hash, reclaim_tx_hash, cancel_tx_hash,
       dispute_tx_hash, resolve_tx_hash,
+      buyer_token, seller_token, attestor_token, arbiter_token,
       idempotency_key, request_payload, created_at
     ) VALUES (
       @id, @contract_id, @numeric_id, @buyer_address, @seller_address, @attestor_address,
@@ -141,6 +174,7 @@ export function insertOrder(row: OrderRow): void {
       @token_contract_id, @amount, @deadline, @status,
       @create_tx_hash, @attest_tx_hash, @claim_tx_hash, @reclaim_tx_hash, @cancel_tx_hash,
       @dispute_tx_hash, @resolve_tx_hash,
+      @buyer_token, @seller_token, @attestor_token, @arbiter_token,
       @idempotency_key, @request_payload, @created_at
     )`,
   ).run({
@@ -153,6 +187,10 @@ export function insertOrder(row: OrderRow): void {
     cancel_tx_hash: row.cancel_tx_hash ?? null,
     dispute_tx_hash: row.dispute_tx_hash ?? null,
     resolve_tx_hash: row.resolve_tx_hash ?? null,
+    buyer_token: row.buyer_token ?? null,
+    seller_token: row.seller_token ?? null,
+    attestor_token: row.attestor_token ?? null,
+    arbiter_token: row.arbiter_token ?? null,
     idempotency_key: row.idempotency_key ?? null,
     request_payload: row.request_payload ?? null,
   });
