@@ -66,6 +66,42 @@ describe("API Routes (routes.ts)", () => {
     expect(body.error).toContain("required");
   });
 
+  it("POST /orders returns 400 on malformed Stellar address", async () => {
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
+    const res = await fetch(`${baseUrl}/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sellerAddress: "not-a-stellar-address",
+        attestorAddress: attestorKeypair.publicKey(),
+        amountStroops: "10000000",
+        deadlineSeconds: deadline.toString(),
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("sellerAddress");
+    expect(body.error).toContain("valid Stellar public key");
+  });
+
+  it("POST /orders returns 400 on past deadline", async () => {
+    const pastDeadline = Math.floor(Date.now() / 1000) - 100;
+    const res = await fetch(`${baseUrl}/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sellerAddress: sellerKeypair.publicKey(),
+        attestorAddress: attestorKeypair.publicKey(),
+        amountStroops: "10000000",
+        deadlineSeconds: pastDeadline.toString(),
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("deadlineSeconds");
+    expect(body.error).toContain("future");
+  });
+
   it("POST /orders creates a new order and returns 201 with serialized order", async () => {
     const deadline = Math.floor(Date.now() / 1000) + 3600;
     const res = await fetch(`${baseUrl}/orders`, {
