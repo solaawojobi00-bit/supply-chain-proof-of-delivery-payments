@@ -27,8 +27,26 @@ vi.mock("../src/contractOps.js", () => {
     callRegistryClaim: vi.fn(async () => "mock-reg-claim-tx-hash"),
     callRegistryReclaim: vi.fn(async () => "mock-reg-reclaim-tx-hash"),
     callRegistryCancel: vi.fn(async () => "mock-reg-cancel-tx-hash"),
-    callRegistryDispute: vi.fn(async () => "mock-reg-dispute-tx-hash"),
-    callRegistryResolveDispute: vi.fn(async () => "mock-reg-resolve-tx-hash"),
+    callRegistryDispute: vi.fn(async () => "mock-reg-dispute-hash"),
+    callRegistryResolveDispute: vi.fn(async () => "mock-reg-resolve-hash"),
+    buildUnsignedCreateTx: vi.fn(async () => "mock-unsigned-create-tx-hash"),
+    buildUnsignedAttestTx: vi.fn(async () => "mock-unsigned-attest-tx-hash"),
+    buildUnsignedClaimTx: vi.fn(async () => "mock-unsigned-claim-tx-hash"),
+    buildUnsignedReclaimTx: vi.fn(async () => "mock-unsigned-reclaim-tx-hash"),
+    buildUnsignedCancelTx: vi.fn(async () => "mock-unsigned-cancel-tx-hash"),
+    buildUnsignedDisputeTx: vi.fn(async () => "mock-unsigned-dispute-tx-hash"),
+    buildUnsignedResolveTx: vi.fn(async () => "mock-unsigned-resolve-tx-hash"),
+    buildRegistryUnsignedCreateTx: vi.fn(async () => "mock-reg-unsigned-create-tx"),
+    buildRegistryUnsignedAttestTx: vi.fn(async () => "mock-reg-unsigned-attest-tx"),
+    buildRegistryUnsignedClaimTx: vi.fn(async () => "mock-reg-unsigned-claim-tx"),
+    buildRegistryUnsignedReclaimTx: vi.fn(async () => "mock-reg-unsigned-reclaim-tx"),
+    buildRegistryUnsignedCancelTx: vi.fn(async () => "mock-reg-unsigned-cancel-tx"),
+    buildRegistryUnsignedDisputeTx: vi.fn(async () => "mock-reg-unsigned-dispute-tx"),
+    buildRegistryUnsignedResolveTx: vi.fn(async () => "mock-reg-unsigned-resolve-tx"),
+    submitSignedXDR: vi.fn(async () => ({
+      txHash: "mock-wallet-signed-tx-hash",
+      status: "SUCCESS",
+    })),
     readOnChainOrder: vi.fn(async (contractId: string) => ({
       buyer: buyerKeypair.publicKey(),
       seller: sellerKeypair.publicKey(),
@@ -799,6 +817,87 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       const resolved = (await resolveRes.json()) as { status: string; lifecycle: string };
       expect(resolved.status).toBe("Reclaimed");
       expect(resolved.lifecycle).toBe("reclaimed");
+    });
+  });
+
+  describe("Full Lifecycle 5: Client-Side Wallet Signing Flow (Unconfigured Wallets)", () => {
+    it("allows addresses without local server keys to complete flow via unsigned XDR and /tx/submit", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const externalSeller = Keypair.random();
+      const externalAttestor = Keypair.random();
+
+      // 1. Create order with external seller and attestor
+      const createRes = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: externalSeller.publicKey(),
+          attestorAddress: externalAttestor.publicKey(),
+          amountStroops: "100000000",
+          deadlineSeconds: String(deadline),
+        }),
+      });
+      expect(createRes.status).toBe(201);
+      const order = (await createRes.json()) as { id: string };
+
+      // 2. Direct server signing fails for unconfigured attestor
+      const directAttestRes = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+        method: "POST",
+      });
+      expect(directAttestRes.status).toBe(400);
+
+      // 3. Client-side wallet signing requests unsigned attest XDR
+      const buildAttestRes = await fetch(`${baseUrl}/orders/${order.id}/attest?unsigned=true`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ attestorAddress: externalAttestor.publicKey() }),
+      });
+      expect(buildAttestRes.status).toBe(200);
+      const unsignedData = (await buildAttestRes.json()) as {
+        unsignedTxXdr: string;
+        action: string;
+      };
+      expect(unsignedData.unsignedTxXdr).toBeDefined();
+      expect(unsignedData.action).toBe("attest");
+
+      // 4. Wallet signs XDR and submits to /tx/submit
+      const submitAttestRes = await fetch(`${baseUrl}/tx/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          signedXdr: "mock-freighter-signed-attest-xdr",
+          orderId: order.id,
+          action: "attest",
+        }),
+      });
+      expect(submitAttestRes.status).toBe(200);
+      const attestResult = (await submitAttestRes.json()) as { txHash: string; status: string };
+      expect(attestResult.txHash).toBe("mock-wallet-signed-tx-hash");
+      expect(attestResult.status).toBe("SUCCESS");
+
+      // 5. Build unsigned claim XDR for external seller
+      const buildClaimRes = await fetch(`${baseUrl}/orders/${order.id}/claim?unsigned=true`, {
+        method: "POST",
+      });
+      expect(buildClaimRes.status).toBe(200);
+      const claimUnsigned = (await buildClaimRes.json()) as {
+        unsignedTxXdr: string;
+        action: string;
+      };
+      expect(claimUnsigned.action).toBe("claim");
+
+      // 6. Submit signed claim XDR
+      const submitClaimRes = await fetch(`${baseUrl}/orders/${order.id}/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          signedXdr: "mock-freighter-signed-claim-xdr",
+          action: "claim",
+        }),
+      });
+      expect(submitClaimRes.status).toBe(200);
+      const claimResult = (await submitClaimRes.json()) as { txHash: string };
+      expect(claimResult.txHash).toBe("mock-wallet-signed-tx-hash");
     });
   });
 });

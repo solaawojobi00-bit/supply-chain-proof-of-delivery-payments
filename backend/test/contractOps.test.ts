@@ -39,6 +39,20 @@ import {
   callRegistryDispute,
   callRegistryResolveDispute,
   readOnChainRegistryOrder,
+  buildUnsignedCreateTx,
+  buildUnsignedAttestTx,
+  buildUnsignedClaimTx,
+  buildUnsignedReclaimTx,
+  buildUnsignedCancelTx,
+  buildUnsignedDisputeTx,
+  buildUnsignedResolveTx,
+  buildRegistryUnsignedCreateTx,
+  buildRegistryUnsignedAttestTx,
+  buildRegistryUnsignedClaimTx,
+  buildRegistryUnsignedReclaimTx,
+  buildRegistryUnsignedCancelTx,
+  buildRegistryUnsignedDisputeTx,
+  buildRegistryUnsignedResolveTx,
 } from "../src/contractOps.js";
 
 describe("Contract Operations with Logging (contractOps.ts)", () => {
@@ -361,5 +375,111 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
     expect(order.status).toBe("Created");
     expect(order.buyer).toBe(buyerKeypair.publicKey());
     expect(order.attestors).toEqual([attestorKeypair.publicKey()]);
+  });
+
+  describe("Unsigned Transaction Builders (SEP-43 / Wallet-Signing)", () => {
+    it("builds unsigned transaction XDR for escrow contract operations", async () => {
+      const mockToXDR = vi.fn().mockReturnValue("mock-unsigned-xdr");
+      mockFrom.mockResolvedValue({
+        create: vi.fn().mockResolvedValue({ toXDR: mockToXDR }),
+        attest: vi.fn().mockResolvedValue({ toXDR: mockToXDR }),
+        claim: vi.fn().mockResolvedValue({ toXDR: mockToXDR }),
+        reclaim: vi.fn().mockResolvedValue({ toXDR: mockToXDR }),
+        cancel: vi.fn().mockResolvedValue({ toXDR: mockToXDR }),
+        dispute: vi.fn().mockResolvedValue({ toXDR: mockToXDR }),
+        resolve_dispute: vi.fn().mockResolvedValue({ toXDR: mockToXDR }),
+      });
+
+      const createXdr = await buildUnsignedCreateTx(contractId, buyerKeypair.publicKey(), {
+        seller: sellerKeypair.publicKey(),
+        attestors: [attestorKeypair.publicKey()],
+        amount: 100n,
+        deadline: 9999n,
+      });
+      expect(createXdr).toBe("mock-unsigned-xdr");
+
+      const attestXdr = await buildUnsignedAttestTx(contractId, attestorKeypair.publicKey());
+      expect(attestXdr).toBe("mock-unsigned-xdr");
+
+      const claimXdr = await buildUnsignedClaimTx(contractId, sellerKeypair.publicKey());
+      expect(claimXdr).toBe("mock-unsigned-xdr");
+
+      const reclaimXdr = await buildUnsignedReclaimTx(contractId, buyerKeypair.publicKey());
+      expect(reclaimXdr).toBe("mock-unsigned-xdr");
+
+      const cancelXdr = await buildUnsignedCancelTx(contractId, buyerKeypair.publicKey());
+      expect(cancelXdr).toBe("mock-unsigned-xdr");
+
+      const disputeXdr = await buildUnsignedDisputeTx(contractId, buyerKeypair.publicKey());
+      expect(disputeXdr).toBe("mock-unsigned-xdr");
+
+      const resolveXdr = await buildUnsignedResolveTx(contractId, arbiterKeypair.publicKey(), true);
+      expect(resolveXdr).toBe("mock-unsigned-xdr");
+    });
+
+    it("builds unsigned transaction XDR for registry contract operations", async () => {
+      const mockToXDR = vi.fn().mockReturnValue("mock-registry-unsigned-xdr");
+      mockFrom.mockResolvedValue({
+        create_order: vi.fn().mockResolvedValue({ toXDR: mockToXDR }),
+        attest: vi.fn().mockResolvedValue({ toXDR: mockToXDR }),
+        claim: vi.fn().mockResolvedValue({ toXDR: mockToXDR }),
+        reclaim: vi.fn().mockResolvedValue({ toXDR: mockToXDR }),
+        cancel: vi.fn().mockResolvedValue({ toXDR: mockToXDR }),
+        dispute: vi.fn().mockResolvedValue({ toXDR: mockToXDR }),
+        resolve_dispute: vi.fn().mockResolvedValue({ toXDR: mockToXDR }),
+      });
+
+      const createXdr = await buildRegistryUnsignedCreateTx(contractId, buyerKeypair.publicKey(), {
+        orderId: 102n,
+        seller: sellerKeypair.publicKey(),
+        attestors: [attestorKeypair.publicKey()],
+        amount: 100n,
+        deadline: 9999n,
+      });
+      expect(createXdr).toBe("mock-registry-unsigned-xdr");
+
+      const attestXdr = await buildRegistryUnsignedAttestTx(
+        contractId,
+        attestorKeypair.publicKey(),
+        102n,
+      );
+      expect(attestXdr).toBe("mock-registry-unsigned-xdr");
+
+      const claimXdr = await buildRegistryUnsignedClaimTx(
+        contractId,
+        sellerKeypair.publicKey(),
+        102n,
+      );
+      expect(claimXdr).toBe("mock-registry-unsigned-xdr");
+
+      const reclaimXdr = await buildRegistryUnsignedReclaimTx(
+        contractId,
+        buyerKeypair.publicKey(),
+        102n,
+      );
+      expect(reclaimXdr).toBe("mock-registry-unsigned-xdr");
+
+      const cancelXdr = await buildRegistryUnsignedCancelTx(
+        contractId,
+        buyerKeypair.publicKey(),
+        102n,
+      );
+      expect(cancelXdr).toBe("mock-registry-unsigned-xdr");
+
+      const disputeXdr = await buildRegistryUnsignedDisputeTx(
+        contractId,
+        buyerKeypair.publicKey(),
+        102n,
+      );
+      expect(disputeXdr).toBe("mock-registry-unsigned-xdr");
+
+      const resolveXdr = await buildRegistryUnsignedResolveTx(
+        contractId,
+        arbiterKeypair.publicKey(),
+        102n,
+        false,
+      );
+      expect(resolveXdr).toBe("mock-registry-unsigned-xdr");
+    });
   });
 });

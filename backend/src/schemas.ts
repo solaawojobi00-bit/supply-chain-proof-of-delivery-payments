@@ -83,6 +83,12 @@ export const createOrderSchema = z
         message: "arbiterAddress must be a valid Stellar public key (G...)",
       })
       .optional(),
+    buyerAddress: z
+      .string()
+      .refine(isValidStellarAddress, {
+        message: "buyerAddress must be a valid Stellar public key (G...)",
+      })
+      .optional(),
   })
   .refine(
     (data) => Boolean(data.attestors && data.attestors.length > 0) || Boolean(data.attestorAddress),
@@ -120,9 +126,40 @@ export const resolveDisputeSchema = z.object({
   }),
 });
 
+export const submitSignedTxSchema = z.object({
+  signedXdr: z
+    .string({ message: "signedXdr is required" })
+    .min(1, { message: "signedXdr cannot be empty" }),
+  orderId: z.string().optional(),
+  action: z
+    .enum(["create", "attest", "claim", "reclaim", "cancel", "dispute", "resolve"])
+    .optional(),
+});
+
+export const buildTxSchema = z.object({
+  action: z.enum(["attest", "claim", "reclaim", "cancel", "dispute", "resolve"], {
+    message: "action must be one of: attest, claim, reclaim, cancel, dispute, resolve",
+  }),
+  attestorAddress: z
+    .string()
+    .refine(isValidStellarAddress, {
+      message: "attestorAddress must be a valid Stellar public key (G...)",
+    })
+    .optional(),
+  callerAddress: z
+    .string()
+    .refine(isValidStellarAddress, {
+      message: "callerAddress must be a valid Stellar public key (G...)",
+    })
+    .optional(),
+  releaseToSeller: z.boolean().optional(),
+});
+
 export type CreateOrderBody = z.infer<typeof createOrderSchema>;
 export type AttestOrderBody = z.infer<typeof attestOrderSchema>;
 export type ResolveDisputeBody = z.infer<typeof resolveDisputeSchema>;
+export type SubmitSignedTxBody = z.infer<typeof submitSignedTxSchema>;
+export type BuildTxBody = z.infer<typeof buildTxSchema>;
 
 export function formatZodError(error: z.ZodError): string {
   const issues = error.issues || (error as unknown as { errors?: z.ZodIssue[] }).errors || [];

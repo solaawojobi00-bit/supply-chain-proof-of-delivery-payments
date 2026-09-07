@@ -1,5 +1,19 @@
 import { randomUUID } from "node:crypto";
 import {
+  buildRegistryUnsignedAttestTx,
+  buildRegistryUnsignedCancelTx,
+  buildRegistryUnsignedClaimTx,
+  buildRegistryUnsignedCreateTx,
+  buildRegistryUnsignedDisputeTx,
+  buildRegistryUnsignedReclaimTx,
+  buildRegistryUnsignedResolveTx,
+  buildUnsignedAttestTx,
+  buildUnsignedCancelTx,
+  buildUnsignedClaimTx,
+  buildUnsignedCreateTx,
+  buildUnsignedDisputeTx,
+  buildUnsignedReclaimTx,
+  buildUnsignedResolveTx,
   callAttest,
   callCancel,
   callClaim,
@@ -17,6 +31,7 @@ import {
   deployEscrowContract,
   readOnChainOrder,
   readOnChainRegistryOrder,
+  submitSignedXDR,
 } from "./contractOps.js";
 import { config } from "./config.js";
 import {
@@ -32,6 +47,7 @@ import { buyerKeypair, deployerKeypair, findLocalSigner } from "./keys.js";
 
 export interface CreateOrderInput {
   sellerAddress: string;
+  buyerAddress?: string;
   attestorAddress?: string;
   attestors?: string[];
   threshold?: number;
@@ -320,6 +336,242 @@ export async function disputeOrder(id: string): Promise<OrderRow> {
   return requireOrder(id);
 }
 
+export async function buildUnsignedCreateOrder(
+  input: CreateOrderInput,
+  idempotencyKey?: string,
+  requestPayload?: string,
+): Promise<{ unsignedTxXdr: string; order: OrderRow }> {
+  const numericId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+  const paymentToken = input.tokenContractId ?? config.paymentTokenContractId;
+  const attestors =
+    input.attestors && input.attestors.length > 0 ? input.attestors : [input.attestorAddress!];
+  const threshold = input.threshold ?? 1;
+  const primaryAttestor = attestors[0];
+  const arbiterAddress = input.arbiterAddress ?? deployerKeypair.publicKey();
+  const buyerAddress = input.buyerAddress ?? buyerKeypair.publicKey();
+
+  let contractId: string;
+  let unsignedTxXdr: string;
+
+  if (config.escrowRegistryContractId) {
+    contractId = config.escrowRegistryContractId;
+    unsignedTxXdr = await buildRegistryUnsignedCreateTx(contractId, buyerAddress, {
+      orderId: BigInt(numericId),
+      seller: input.sellerAddress,
+      attestors,
+      threshold,
+      arbiter: arbiterAddress,
+      token: paymentToken,
+      amount: input.amountStroops,
+      deadline: input.deadlineSeconds,
+    });
+  } else {
+    const deployed = await deployEscrowContract();
+    contractId = deployed.contractId;
+    unsignedTxXdr = await buildUnsignedCreateTx(contractId, buyerAddress, {
+      seller: input.sellerAddress,
+      attestors,
+      threshold,
+      arbiter: arbiterAddress,
+      token: paymentToken,
+      amount: input.amountStroops,
+      deadline: input.deadlineSeconds,
+    });
+  }
+
+  const row: OrderRow = {
+    id: randomUUID(),
+    contract_id: contractId,
+    numeric_id: numericId,
+    buyer_address: buyerAddress,
+    seller_address: input.sellerAddress,
+    attestor_address: primaryAttestor,
+    attestors: JSON.stringify(attestors),
+    threshold,
+    confirmations: JSON.stringify([]),
+    arbiter_address: arbiterAddress,
+    token_contract_id: paymentToken,
+    amount: input.amountStroops.toString(),
+    deadline: Number(input.deadlineSeconds),
+    status: "Created",
+    create_tx_hash: null,
+    attest_tx_hash: null,
+    claim_tx_hash: null,
+    reclaim_tx_hash: null,
+    dispute_tx_hash: null,
+    resolve_tx_hash: null,
+    idempotency_key: idempotencyKey ?? null,
+    request_payload: requestPayload ?? null,
+    created_at: new Date().toISOString(),
+  };
+  insertOrder(row);
+  return { unsignedTxXdr, order: row };
+}
+
+export async function buildUnsignedAttest(
+  id: string,
+  attestorAddress?: string,
+): Promise<{ unsignedTxXdr: string; orderId: string; contractId: string; action: string }> {
+  const order = requireOrder(id);
+  if (order.status !== "Created") {
+    throw new HttpError(409, `Order is ${order.status}; can only attest an order that is Created`);
+  }
+  if (Date.now() / 1000 >= order.deadline) {
+    throw new HttpError(
+      409,
+      "Deadline has already passed; this order can only be reclaimed by the buyer now",
+    );
+  }
+
+  const designatedAttestors: string[] = order.attestors
+    ? JSON.parse(order.attestors)
+    : [order.attestor_address];
+  const confirmations: string[] = order.confirmations ? JSON.parse(order.confirmations) : [];
+
+  let targetAttestor: string;
+  if (attestorAddress) {
+    if (!designatedAttestors.includes(attestorAddress)) {
+      throw new HttpError(400, "Attestor address is not authorized for this order");
+    }
+    if (confirmations.includes(attestorAddress)) {
+      throw new HttpError(409, "This attestor has already confirmed delivery for this order");
+    }
+    targetAttestor = attestorAddress;
+  } else {
+    const unconfirmed = designatedAttestors.find((a) => !confirmations.includes(a));
+    if (!unconfirmed) {
+      throw new HttpError(409, "All authorized attestors have already confirmed delivery");
+    }
+    targetAttestor = unconfirmed;
+  }
+
+  const unsignedTxXdr =
+    order.numeric_id != null && order.contract_id === config.escrowRegistryContractId
+      ? await buildRegistryUnsignedAttestTx(
+          order.contract_id,
+          targetAttestor,
+          BigInt(order.numeric_id),
+        )
+      : await buildUnsignedAttestTx(order.contract_id, targetAttestor);
+
+  return { unsignedTxXdr, orderId: id, contractId: order.contract_id, action: "attest" };
+}
+
+export async function buildUnsignedClaim(
+  id: string,
+): Promise<{ unsignedTxXdr: string; orderId: string; contractId: string; action: string }> {
+  const order = requireOrder(id);
+  if (order.status !== "Attested") {
+    throw new HttpError(
+      409,
+      `Order is ${order.status}; can only claim an order that has been Attested`,
+    );
+  }
+
+  const unsignedTxXdr =
+    order.numeric_id != null && order.contract_id === config.escrowRegistryContractId
+      ? await buildRegistryUnsignedClaimTx(
+          order.contract_id,
+          order.seller_address,
+          BigInt(order.numeric_id),
+        )
+      : await buildUnsignedClaimTx(order.contract_id, order.seller_address);
+
+  return { unsignedTxXdr, orderId: id, contractId: order.contract_id, action: "claim" };
+}
+
+export async function buildUnsignedReclaim(
+  id: string,
+): Promise<{ unsignedTxXdr: string; orderId: string; contractId: string; action: string }> {
+  const order = requireOrder(id);
+  if (order.status !== "Created") {
+    throw new HttpError(
+      409,
+      `Order is ${order.status}; can only reclaim an order that is still Created`,
+    );
+  }
+  if (Date.now() / 1000 < order.deadline) {
+    throw new HttpError(409, "Deadline has not passed yet; buyer cannot reclaim until it does");
+  }
+
+  const unsignedTxXdr =
+    order.numeric_id != null && order.contract_id === config.escrowRegistryContractId
+      ? await buildRegistryUnsignedReclaimTx(
+          order.contract_id,
+          order.buyer_address,
+          BigInt(order.numeric_id),
+        )
+      : await buildUnsignedReclaimTx(order.contract_id, order.buyer_address);
+
+  return { unsignedTxXdr, orderId: id, contractId: order.contract_id, action: "reclaim" };
+}
+
+export async function buildUnsignedCancel(
+  id: string,
+  callerAddress?: string,
+): Promise<{ unsignedTxXdr: string; orderId: string; contractId: string; action: string }> {
+  const order = requireOrder(id);
+  if (order.status !== "Created") {
+    throw new HttpError(409, `Order is ${order.status}; can only cancel an order that is Created`);
+  }
+  const caller = callerAddress ?? order.buyer_address;
+
+  const unsignedTxXdr =
+    order.numeric_id != null && order.contract_id === config.escrowRegistryContractId
+      ? await buildRegistryUnsignedCancelTx(order.contract_id, caller, BigInt(order.numeric_id))
+      : await buildUnsignedCancelTx(order.contract_id, caller);
+
+  return { unsignedTxXdr, orderId: id, contractId: order.contract_id, action: "cancel" };
+}
+
+export async function buildUnsignedDispute(
+  id: string,
+  buyerAddress?: string,
+): Promise<{ unsignedTxXdr: string; orderId: string; contractId: string; action: string }> {
+  const order = requireOrder(id);
+  if (order.status !== "Attested") {
+    throw new HttpError(
+      409,
+      `Order is ${order.status}; can only dispute an order that is Attested`,
+    );
+  }
+  const buyer = buyerAddress ?? order.buyer_address;
+
+  const unsignedTxXdr =
+    order.numeric_id != null && order.contract_id === config.escrowRegistryContractId
+      ? await buildRegistryUnsignedDisputeTx(order.contract_id, buyer, BigInt(order.numeric_id))
+      : await buildUnsignedDisputeTx(order.contract_id, buyer);
+
+  return { unsignedTxXdr, orderId: id, contractId: order.contract_id, action: "dispute" };
+}
+
+export async function buildUnsignedResolve(
+  id: string,
+  releaseToSeller: boolean,
+  arbiterAddress?: string,
+): Promise<{ unsignedTxXdr: string; orderId: string; contractId: string; action: string }> {
+  const order = requireOrder(id);
+  if (order.status !== "Disputed") {
+    throw new HttpError(
+      409,
+      `Order is ${order.status}; can only resolve a dispute on an order that is Disputed`,
+    );
+  }
+  const arbiter = arbiterAddress ?? order.arbiter_address ?? deployerKeypair.publicKey();
+
+  const unsignedTxXdr =
+    order.numeric_id != null && order.contract_id === config.escrowRegistryContractId
+      ? await buildRegistryUnsignedResolveTx(
+          order.contract_id,
+          arbiter,
+          BigInt(order.numeric_id),
+          releaseToSeller,
+        )
+      : await buildUnsignedResolveTx(order.contract_id, arbiter, releaseToSeller);
+
+  return { unsignedTxXdr, orderId: id, contractId: order.contract_id, action: "resolve" };
+}
+
 export async function resolveDispute(id: string, releaseToSeller: boolean): Promise<OrderRow> {
   const order = requireOrder(id);
   if (order.status !== "Disputed") {
@@ -348,4 +600,81 @@ export async function resolveDispute(id: string, releaseToSeller: boolean): Prom
   const nextStatus = releaseToSeller ? "Claimed" : "Reclaimed";
   updateOrderStatus(id, nextStatus, "resolve_tx_hash", txHash ?? "");
   return requireOrder(id);
+}
+
+export async function submitSignedTx(
+  signedXdr: string,
+  orderId?: string,
+  action?: string,
+): Promise<{ txHash: string; status: string; order?: OrderRow }> {
+  const result = await submitSignedXDR(signedXdr);
+  if (!orderId) {
+    return { txHash: result.txHash, status: result.status };
+  }
+  const order = getOrder(orderId);
+  if (!order) {
+    return { txHash: result.txHash, status: result.status };
+  }
+
+  try {
+    const chainState =
+      order.numeric_id != null && order.contract_id === config.escrowRegistryContractId
+        ? await readOnChainRegistryOrder(order.contract_id, BigInt(order.numeric_id))
+        : await readOnChainOrder(order.contract_id);
+
+    let onChainStatus = chainState.status as OrderRow["status"];
+    const confirmations = chainState.confirmations;
+
+    if (action === "attest") {
+      onChainStatus = "Attested";
+    } else if (action === "claim") {
+      onChainStatus = "Claimed";
+    } else if (action === "reclaim") {
+      onChainStatus = "Reclaimed";
+    } else if (action === "cancel") {
+      onChainStatus = "Cancelled";
+    } else if (action === "dispute") {
+      onChainStatus = "Disputed";
+    } else if (action === "resolve") {
+      onChainStatus = "Claimed";
+    }
+
+    let txHashCol:
+      | "attest_tx_hash"
+      | "claim_tx_hash"
+      | "reclaim_tx_hash"
+      | "cancel_tx_hash"
+      | "dispute_tx_hash"
+      | "resolve_tx_hash" = "attest_tx_hash";
+
+    if (action === "claim" || onChainStatus === "Claimed") txHashCol = "claim_tx_hash";
+    else if (action === "reclaim" || onChainStatus === "Reclaimed") txHashCol = "reclaim_tx_hash";
+    else if (action === "cancel" || onChainStatus === "Cancelled") txHashCol = "cancel_tx_hash";
+    else if (action === "dispute" || onChainStatus === "Disputed") txHashCol = "dispute_tx_hash";
+    else if (action === "resolve") txHashCol = "resolve_tx_hash";
+
+    updateOrderAttestation(
+      orderId,
+      onChainStatus,
+      confirmations,
+      action === "attest" ? result.txHash : (order.attest_tx_hash ?? ""),
+    );
+    updateOrderStatus(orderId, onChainStatus, txHashCol, result.txHash);
+  } catch {
+    if (action === "attest") {
+      updateOrderStatus(orderId, "Attested", "attest_tx_hash", result.txHash);
+    } else if (action === "claim") {
+      updateOrderStatus(orderId, "Claimed", "claim_tx_hash", result.txHash);
+    } else if (action === "reclaim") {
+      updateOrderStatus(orderId, "Reclaimed", "reclaim_tx_hash", result.txHash);
+    } else if (action === "cancel") {
+      updateOrderStatus(orderId, "Cancelled", "cancel_tx_hash", result.txHash);
+    } else if (action === "dispute") {
+      updateOrderStatus(orderId, "Disputed", "dispute_tx_hash", result.txHash);
+    } else if (action === "resolve") {
+      updateOrderStatus(orderId, "Claimed", "resolve_tx_hash", result.txHash);
+    }
+  }
+
+  return { txHash: result.txHash, status: result.status, order: requireOrder(orderId) };
 }

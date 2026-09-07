@@ -1,4 +1,4 @@
-import { Keypair } from "@stellar/stellar-sdk";
+import { Keypair, rpc, TransactionBuilder } from "@stellar/stellar-sdk";
 import {
   AssembledTransaction,
   Client as ContractClient,
@@ -743,4 +743,238 @@ export async function readOnChainRegistryOrder(
   const tx = await client.get_order({ order_id: orderId });
   const raw = unwrap(tx.result);
   return { ...raw, status: raw.status.tag };
+}
+
+async function readOnlyClientFor(contractId: string, publicKey: string) {
+  return ContractClient.from<EscrowContract>({
+    ...baseClientOptions,
+    contractId,
+    publicKey,
+  });
+}
+
+async function readOnlyRegistryClientFor(contractId: string, publicKey: string) {
+  return ContractClient.from<EscrowRegistryContract>({
+    ...baseClientOptions,
+    contractId,
+    publicKey,
+  });
+}
+
+export async function buildUnsignedCreateTx(
+  contractId: string,
+  buyerAddress: string,
+  params: {
+    seller: string;
+    attestors: string[];
+    threshold?: number;
+    arbiter?: string;
+    token?: string;
+    amount: bigint;
+    deadline: bigint;
+  },
+): Promise<string> {
+  const client = await readOnlyClientFor(contractId, buyerAddress);
+  const tx = await client.create({
+    buyer: buyerAddress,
+    seller: params.seller,
+    attestors: params.attestors,
+    threshold: params.threshold ?? 1,
+    arbiter: params.arbiter ?? deployerKeypair.publicKey(),
+    token: params.token ?? config.paymentTokenContractId,
+    amount: params.amount,
+    deadline: params.deadline,
+  });
+  return tx.toXDR();
+}
+
+export async function buildRegistryUnsignedCreateTx(
+  contractId: string,
+  buyerAddress: string,
+  params: {
+    orderId: bigint;
+    seller: string;
+    attestors: string[];
+    threshold?: number;
+    arbiter?: string;
+    token?: string;
+    amount: bigint;
+    deadline: bigint;
+  },
+): Promise<string> {
+  const client = await readOnlyRegistryClientFor(contractId, buyerAddress);
+  const tx = await client.create_order({
+    order_id: params.orderId,
+    buyer: buyerAddress,
+    seller: params.seller,
+    attestors: params.attestors,
+    threshold: params.threshold ?? 1,
+    arbiter: params.arbiter ?? deployerKeypair.publicKey(),
+    token: params.token ?? config.paymentTokenContractId,
+    amount: params.amount,
+    deadline: params.deadline,
+  });
+  return tx.toXDR();
+}
+
+export async function buildUnsignedAttestTx(
+  contractId: string,
+  attestorAddress: string,
+): Promise<string> {
+  const client = await readOnlyClientFor(contractId, attestorAddress);
+  const tx = await client.attest({ attestor: attestorAddress });
+  return tx.toXDR();
+}
+
+export async function buildRegistryUnsignedAttestTx(
+  contractId: string,
+  attestorAddress: string,
+  orderId: bigint,
+): Promise<string> {
+  const client = await readOnlyRegistryClientFor(contractId, attestorAddress);
+  const tx = await client.attest({ order_id: orderId, attestor: attestorAddress });
+  return tx.toXDR();
+}
+
+export async function buildUnsignedClaimTx(
+  contractId: string,
+  sellerAddress: string,
+): Promise<string> {
+  const client = await readOnlyClientFor(contractId, sellerAddress);
+  const tx = await client.claim();
+  return tx.toXDR();
+}
+
+export async function buildRegistryUnsignedClaimTx(
+  contractId: string,
+  sellerAddress: string,
+  orderId: bigint,
+): Promise<string> {
+  const client = await readOnlyRegistryClientFor(contractId, sellerAddress);
+  const tx = await client.claim({ order_id: orderId });
+  return tx.toXDR();
+}
+
+export async function buildUnsignedReclaimTx(
+  contractId: string,
+  buyerAddress: string,
+): Promise<string> {
+  const client = await readOnlyClientFor(contractId, buyerAddress);
+  const tx = await client.reclaim();
+  return tx.toXDR();
+}
+
+export async function buildRegistryUnsignedReclaimTx(
+  contractId: string,
+  buyerAddress: string,
+  orderId: bigint,
+): Promise<string> {
+  const client = await readOnlyRegistryClientFor(contractId, buyerAddress);
+  const tx = await client.reclaim({ order_id: orderId });
+  return tx.toXDR();
+}
+
+export async function buildUnsignedCancelTx(
+  contractId: string,
+  callerAddress: string,
+): Promise<string> {
+  const client = await readOnlyClientFor(contractId, callerAddress);
+  const tx = await client.cancel();
+  return tx.toXDR();
+}
+
+export async function buildRegistryUnsignedCancelTx(
+  contractId: string,
+  callerAddress: string,
+  orderId: bigint,
+): Promise<string> {
+  const client = await readOnlyRegistryClientFor(contractId, callerAddress);
+  const tx = await client.cancel({ order_id: orderId });
+  return tx.toXDR();
+}
+
+export async function buildUnsignedDisputeTx(
+  contractId: string,
+  buyerAddress: string,
+): Promise<string> {
+  const client = await readOnlyClientFor(contractId, buyerAddress);
+  const tx = await client.dispute();
+  return tx.toXDR();
+}
+
+export async function buildRegistryUnsignedDisputeTx(
+  contractId: string,
+  buyerAddress: string,
+  orderId: bigint,
+): Promise<string> {
+  const client = await readOnlyRegistryClientFor(contractId, buyerAddress);
+  const tx = await client.dispute({ order_id: orderId });
+  return tx.toXDR();
+}
+
+export async function buildUnsignedResolveTx(
+  contractId: string,
+  arbiterAddress: string,
+  releaseToSeller: boolean,
+): Promise<string> {
+  const client = await readOnlyClientFor(contractId, arbiterAddress);
+  const tx = await client.resolve_dispute({ release_to_seller: releaseToSeller });
+  return tx.toXDR();
+}
+
+export async function buildRegistryUnsignedResolveTx(
+  contractId: string,
+  arbiterAddress: string,
+  orderId: bigint,
+  releaseToSeller: boolean,
+): Promise<string> {
+  const client = await readOnlyRegistryClientFor(contractId, arbiterAddress);
+  const tx = await client.resolve_dispute({
+    order_id: orderId,
+    release_to_seller: releaseToSeller,
+  });
+  return tx.toXDR();
+}
+
+export async function submitSignedXDR(
+  signedXDR: string,
+): Promise<{ txHash: string; status: string }> {
+  const start = Date.now();
+  try {
+    const server = new rpc.Server(config.rpcUrl, {
+      allowHttp: config.rpcUrl.startsWith("http://"),
+    });
+    const tx = TransactionBuilder.fromXDR(signedXDR, config.networkPassphrase);
+    const sendRes = await server.sendTransaction(tx);
+    if (sendRes.status === "ERROR") {
+      throw new Error(
+        `Transaction submission error: ${JSON.stringify(sendRes.errorResult ?? sendRes)}`,
+      );
+    }
+    const pollRes = await server.pollTransaction(sendRes.hash);
+    if (pollRes.status === "FAILED") {
+      throw new Error(
+        `Transaction failed on-chain: ${JSON.stringify(pollRes.resultXdr ?? pollRes)}`,
+      );
+    }
+    const duration = Date.now() - start;
+    logStructured({
+      type: "contract_call",
+      method: "submit_signed_xdr",
+      txHash: sendRes.hash,
+      status: pollRes.status,
+      duration,
+    });
+    return { txHash: sendRes.hash, status: pollRes.status };
+  } catch (err) {
+    const duration = Date.now() - start;
+    logStructured({
+      level: "error",
+      type: "contract_call",
+      method: "submit_signed_xdr",
+      error: err instanceof Error ? err.message : String(err),
+      duration,
+    });
+    throw err;
+  }
 }
