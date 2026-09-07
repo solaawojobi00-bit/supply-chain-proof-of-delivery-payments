@@ -124,6 +124,25 @@ describe("API Routes (routes.ts)", () => {
     expect(order.txHashes.create).toBe("mock-create-hash");
   });
 
+  it("POST /orders accepts custom tokenContractId and saves it on the order", async () => {
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
+    const customToken = "CAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRDB3V";
+    const res = await fetch(`${baseUrl}/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sellerAddress: sellerKeypair.publicKey(),
+        attestorAddress: attestorKeypair.publicKey(),
+        amountStroops: "15000000",
+        deadlineSeconds: deadline.toString(),
+        tokenContractId: customToken,
+      }),
+    });
+    expect(res.status).toBe(201);
+    const order = (await res.json()) as any;
+    expect(order.tokenContractId).toBe(customToken);
+  });
+
   it("GET /orders returns a list of orders", async () => {
     const res = await fetch(`${baseUrl}/orders`);
     expect(res.status).toBe(200);

@@ -44,6 +44,9 @@ async function sleep(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const tokenArg = process.argv.find((arg) => arg.startsWith("--token="))?.split("=")[1];
+const tokenContractId = tokenArg || process.env.DEMO_TOKEN_CONTRACT_ID;
+
 async function runClaimPath() {
   console.log("Demo: create -> attest -> claim (delivery confirmed before deadline)");
 
@@ -53,6 +56,7 @@ async function runClaimPath() {
     attestorAddress: attestorKeypair.publicKey(),
     amountStroops: "500000000",
     deadlineSeconds: String(deadlineSeconds),
+    tokenContractId,
   });
   log("1. Order created (funds escrowed on testnet)", order);
   assertStatus(order, "Created");
@@ -77,6 +81,7 @@ async function runReclaimPath() {
     attestorAddress: attestorKeypair.publicKey(),
     amountStroops: "250000000",
     deadlineSeconds: String(deadlineSeconds),
+    tokenContractId,
   });
   log("1. Order created with a 15s deadline (funds escrowed on testnet)", order);
   assertStatus(order, "Created");
@@ -96,12 +101,12 @@ async function runReclaimPath() {
   );
 }
 
-const mode = process.argv[2];
-if (mode === "claim") {
+const mode = process.argv[2]?.startsWith("--") ? process.argv[3] : process.argv[2];
+if (mode === "claim" || process.argv.includes("claim")) {
   await runClaimPath();
-} else if (mode === "reclaim") {
+} else if (mode === "reclaim" || process.argv.includes("reclaim")) {
   await runReclaimPath();
 } else {
-  console.error("Usage: tsx demo/demo.ts <claim|reclaim>");
+  console.error("Usage: tsx demo/demo.ts <claim|reclaim> [--token=<contractId>]");
   process.exit(1);
 }

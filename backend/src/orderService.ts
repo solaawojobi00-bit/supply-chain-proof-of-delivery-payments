@@ -22,6 +22,7 @@ export interface CreateOrderInput {
   attestorAddress: string;
   amountStroops: bigint;
   deadlineSeconds: bigint;
+  tokenContractId?: string;
 }
 
 function requireOrder(id: string): OrderRow {
@@ -53,6 +54,7 @@ export async function createOrder(
   requestPayload?: string,
 ): Promise<OrderRow> {
   const numericId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+  const paymentToken = input.tokenContractId ?? config.paymentTokenContractId;
   let contractId: string;
   let createTxHash: string | undefined;
 
@@ -62,6 +64,7 @@ export async function createOrder(
       orderId: BigInt(numericId),
       seller: input.sellerAddress,
       attestor: input.attestorAddress,
+      token: paymentToken,
       amount: input.amountStroops,
       deadline: input.deadlineSeconds,
     });
@@ -71,6 +74,7 @@ export async function createOrder(
     createTxHash = await callCreate(contractId, buyerKeypair, {
       seller: input.sellerAddress,
       attestor: input.attestorAddress,
+      token: paymentToken,
       amount: input.amountStroops,
       deadline: input.deadlineSeconds,
     });
@@ -83,7 +87,7 @@ export async function createOrder(
     buyer_address: buyerKeypair.publicKey(),
     seller_address: input.sellerAddress,
     attestor_address: input.attestorAddress,
-    token_contract_id: config.paymentTokenContractId,
+    token_contract_id: paymentToken,
     amount: input.amountStroops.toString(),
     deadline: Number(input.deadlineSeconds),
     status: "Created",
