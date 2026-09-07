@@ -72,8 +72,6 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
   const buyerAuth = { Authorization: `Bearer ${config.buyerApiKey}` };
   const sellerAuth = { Authorization: `Bearer ${config.sellerApiKey}` };
   const attestorAuth = { Authorization: `Bearer ${config.attestorApiKey}` };
-  const arbiterAuth = { Authorization: `Bearer ${config.arbiterApiKey}` };
-  const adminAuth = { Authorization: `Bearer ${config.adminApiKey}` };
 
   beforeAll(async () => {
     server = app.listen(0);

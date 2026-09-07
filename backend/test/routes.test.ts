@@ -71,10 +71,8 @@ describe("API Routes (routes.ts)", () => {
   let baseUrl: string;
 
   const buyerAuth = { Authorization: `Bearer ${config.buyerApiKey}` };
-  const sellerAuth = { Authorization: `Bearer ${config.sellerApiKey}` };
   const attestorAuth = { Authorization: `Bearer ${config.attestorApiKey}` };
   const arbiterAuth = { Authorization: `Bearer ${config.arbiterApiKey}` };
-  const adminAuth = { Authorization: `Bearer ${config.adminApiKey}` };
 
   beforeAll(async () => {
     const app = express();
