@@ -12,7 +12,9 @@ import { logStructured } from "./logger.js";
 interface RawOrder {
   buyer: string;
   seller: string;
-  attestor: string;
+  attestors: string[];
+  threshold: number;
+  confirmations: string[];
   token: string;
   amount: bigint;
   deadline: bigint;
@@ -36,12 +38,13 @@ interface EscrowContract {
   create(args: {
     buyer: string;
     seller: string;
-    attestor: string;
+    attestors: string[];
+    threshold: number;
     token: string;
     amount: bigint;
     deadline: bigint;
   }): Promise<AssembledTransaction<ContractResult<null>>>;
-  attest(): Promise<AssembledTransaction<ContractResult<null>>>;
+  attest(args: { attestor: string }): Promise<AssembledTransaction<ContractResult<null>>>;
   claim(): Promise<AssembledTransaction<ContractResult<null>>>;
   reclaim(): Promise<AssembledTransaction<ContractResult<null>>>;
   cancel(): Promise<AssembledTransaction<ContractResult<null>>>;
@@ -117,7 +120,14 @@ async function clientFor(contractId: string, signer: Keypair) {
 export async function callCreate(
   contractId: string,
   buyer: Keypair,
-  params: { seller: string; attestor: string; token?: string; amount: bigint; deadline: bigint },
+  params: {
+    seller: string;
+    attestors: string[];
+    threshold?: number;
+    token?: string;
+    amount: bigint;
+    deadline: bigint;
+  },
 ): Promise<string | undefined> {
   const start = Date.now();
   try {
@@ -125,7 +135,8 @@ export async function callCreate(
     const tx = await client.create({
       buyer: buyer.publicKey(),
       seller: params.seller,
-      attestor: params.attestor,
+      attestors: params.attestors,
+      threshold: params.threshold ?? 1,
       token: params.token ?? config.paymentTokenContractId,
       amount: params.amount,
       deadline: params.deadline,
@@ -163,7 +174,7 @@ export async function callAttest(
   const start = Date.now();
   try {
     const client = await clientFor(contractId, attestor);
-    const tx = await client.attest();
+    const tx = await client.attest({ attestor: attestor.publicKey() });
     const sent = await tx.signAndSend();
     unwrap(sent.result);
     const txHash = sent.sendTransactionResponse?.hash;
@@ -298,12 +309,16 @@ export interface EscrowRegistryContract {
     order_id: bigint;
     buyer: string;
     seller: string;
-    attestor: string;
+    attestors: string[];
+    threshold: number;
     token: string;
     amount: bigint;
     deadline: bigint;
   }): Promise<AssembledTransaction<ContractResult<null>>>;
-  attest(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
+  attest(args: {
+    order_id: bigint;
+    attestor: string;
+  }): Promise<AssembledTransaction<ContractResult<null>>>;
   claim(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
   reclaim(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
   cancel(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
@@ -315,7 +330,9 @@ export interface EscrowRegistryContract {
 export interface OnChainOrder {
   buyer: string;
   seller: string;
-  attestor: string;
+  attestors: string[];
+  threshold: number;
+  confirmations: string[];
   token: string;
   amount: bigint;
   deadline: bigint;
@@ -348,7 +365,8 @@ export async function callRegistryCreateOrder(
   params: {
     orderId: bigint;
     seller: string;
-    attestor: string;
+    attestors: string[];
+    threshold?: number;
     token?: string;
     amount: bigint;
     deadline: bigint;
@@ -361,7 +379,8 @@ export async function callRegistryCreateOrder(
       order_id: params.orderId,
       buyer: buyer.publicKey(),
       seller: params.seller,
-      attestor: params.attestor,
+      attestors: params.attestors,
+      threshold: params.threshold ?? 1,
       token: params.token ?? config.paymentTokenContractId,
       amount: params.amount,
       deadline: params.deadline,
@@ -402,7 +421,7 @@ export async function callRegistryAttest(
   const start = Date.now();
   try {
     const client = await registryClientFor(contractId, attestor);
-    const tx = await client.attest({ order_id: orderId });
+    const tx = await client.attest({ order_id: orderId, attestor: attestor.publicKey() });
     const sent = await tx.signAndSend();
     unwrap(sent.result);
     const txHash = sent.sendTransactionResponse?.hash;

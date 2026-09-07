@@ -121,15 +121,15 @@ The escrow smart contracts and REST API accept any Stellar Asset Contract (SAC) 
 
 A complete machine-readable OpenAPI 3.0 specification is available at [`backend/openapi.yaml`](backend/openapi.yaml).
 
-| Endpoint                   | Effect                                                                                                  |
-| -------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `POST /orders`             | Create an order: `{ sellerAddress, attestorAddress, amountStroops, deadlineSeconds, tokenContractId? }` |
-| `GET /orders`              | List all orders                                                                                         |
-| `GET /orders/:id`          | Order status, including a live on-chain read                                                            |
-| `POST /orders/:id/attest`  | Attestor confirms delivery                                                                              |
-| `POST /orders/:id/claim`   | Seller claims the escrowed funds                                                                        |
-| `POST /orders/:id/reclaim` | Buyer reclaims funds once the deadline has passed                                                       |
-| `POST /orders/:id/cancel`  | Buyer and seller mutually cancel order before attestation, refunding buyer                              |
+| Endpoint                   | Effect                                                                                                                                             |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /orders`             | Create an order: `{ sellerAddress, attestorAddress?, attestors?: string[], threshold?: number, amountStroops, deadlineSeconds, tokenContractId? }` |
+| `GET /orders`              | List all orders                                                                                                                                    |
+| `GET /orders/:id`          | Order status, including a live on-chain read                                                                                                       |
+| `POST /orders/:id/attest`  | Authorized attestor confirms delivery (optional body: `{ attestorAddress }`; transitions to Attested when threshold is met)                        |
+| `POST /orders/:id/claim`   | Seller claims the escrowed funds                                                                                                                   |
+| `POST /orders/:id/reclaim` | Buyer reclaims funds once the deadline has passed                                                                                                  |
+| `POST /orders/:id/cancel`  | Buyer and seller mutually cancel order before attestation, refunding buyer                                                                         |
 
 ## Development & Quality Checks
 

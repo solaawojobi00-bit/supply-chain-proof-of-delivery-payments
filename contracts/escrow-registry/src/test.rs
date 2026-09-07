@@ -2,12 +2,16 @@
 
 use super::*;
 use soroban_sdk::testutils::{Address as _, Ledger};
-use soroban_sdk::Env;
+use soroban_sdk::{vec, Env, Vec};
 
 fn create_token(
     env: &Env,
     admin: &Address,
-) -> (Address, token::StellarAssetClient<'static>, token::Client<'static>) {
+) -> (
+    Address,
+    token::StellarAssetClient<'static>,
+    token::Client<'static>,
+) {
     let sac = env.register_stellar_asset_contract_v2(admin.clone());
     let asset_client = token::StellarAssetClient::new(env, &sac.address());
     let token_client = token::Client::new(env, &sac.address());
@@ -20,7 +24,11 @@ struct TestSetup {
     client: EscrowRegistryContractClient<'static>,
     buyer: Address,
     seller: Address,
-    attestor: Address,
+    attestor1: Address,
+    attestor2: Address,
+    attestor3: Address,
+    attestors: Vec<Address>,
+    threshold: u32,
     token: Address,
     token_client: token::Client<'static>,
     amount: i128,
@@ -33,7 +41,9 @@ fn setup() -> TestSetup {
     let admin = Address::generate(&env);
     let buyer = Address::generate(&env);
     let seller = Address::generate(&env);
-    let attestor = Address::generate(&env);
+    let attestor1 = Address::generate(&env);
+    let attestor2 = Address::generate(&env);
+    let attestor3 = Address::generate(&env);
 
     let (token, asset_client, token_client) = create_token(&env, &admin);
     let amount: i128 = 1_000_000_000; // 100 XLM in stroops
@@ -41,6 +51,8 @@ fn setup() -> TestSetup {
 
     let contract_id = env.register(EscrowRegistryContract, ());
     let client = EscrowRegistryContractClient::new(&env, &contract_id);
+    let attestors = vec![&env, attestor1.clone(), attestor2.clone(), attestor3.clone()];
+    let threshold = 2;
 
     TestSetup {
         env,
@@ -48,7 +60,11 @@ fn setup() -> TestSetup {
         client,
         buyer,
         seller,
-        attestor,
+        attestor1,
+        attestor2,
+        attestor3,
+        attestors,
+        threshold,
         token,
         token_client,
         amount,
@@ -63,23 +79,25 @@ fn test_registry_full_happy_path_multiple_orders() {
     let order_id_2: u64 = 102;
     let deadline = s.env.ledger().timestamp() + 1000;
 
-    // Create Order 1
+    // Create Order 1 (threshold 2-of-3)
     s.client.create_order(
         &order_id_1,
         &s.buyer,
         &s.seller,
-        &s.attestor,
+        &s.attestors,
+        &s.threshold,
         &s.token,
         &s.amount,
         &deadline,
     );
 
-    // Create Order 2
+    // Create Order 2 (threshold 2-of-3)
     s.client.create_order(
         &order_id_2,
         &s.buyer,
         &s.seller,
-        &s.attestor,
+        &s.attestors,
+        &s.threshold,
         &s.token,
         &(s.amount * 2),
         &deadline,
@@ -91,13 +109,18 @@ fn test_registry_full_happy_path_multiple_orders() {
     let o1 = s.client.get_order(&order_id_1);
     assert_eq!(o1.status, OrderStatus::Created);
     assert_eq!(o1.amount, s.amount);
+    assert_eq!(o1.confirmations.len(), 0);
 
     let o2 = s.client.get_order(&order_id_2);
     assert_eq!(o2.status, OrderStatus::Created);
     assert_eq!(o2.amount, s.amount * 2);
 
-    // Attest Order 1
-    s.client.attest(&order_id_1);
+    // Attest Order 1: 1 of 2 confirmations -> still Created
+    s.client.attest(&order_id_1, &s.attestor1);
+    assert_eq!(s.client.get_order(&order_id_1).status, OrderStatus::Created);
+
+    // Attest Order 1: 2 of 2 confirmations -> Attested
+    s.client.attest(&order_id_1, &s.attestor2);
     assert_eq!(s.client.get_order(&order_id_1).status, OrderStatus::Attested);
     assert_eq!(s.client.get_order(&order_id_2).status, OrderStatus::Created);
 
@@ -107,8 +130,11 @@ fn test_registry_full_happy_path_multiple_orders() {
     assert_eq!(s.token_client.balance(&s.seller), s.amount);
     assert_eq!(s.token_client.balance(&s.contract_id), s.amount * 2);
 
-    // Attest & Claim Order 2
-    s.client.attest(&order_id_2);
+    // Attest & Claim Order 2 (using attestor2 and attestor3)
+    s.client.attest(&order_id_2, &s.attestor2);
+    s.client.attest(&order_id_2, &s.attestor3);
+    assert_eq!(s.client.get_order(&order_id_2).status, OrderStatus::Attested);
+
     s.client.claim(&order_id_2);
     assert_eq!(s.client.get_order(&order_id_2).status, OrderStatus::Claimed);
     assert_eq!(s.token_client.balance(&s.seller), s.amount * 3);
@@ -125,11 +151,16 @@ fn test_registry_reclaim_after_deadline() {
         &order_id,
         &s.buyer,
         &s.seller,
-        &s.attestor,
+        &s.attestors,
+        &s.threshold,
         &s.token,
         &s.amount,
         &deadline,
     );
+
+    // 1 of 2 confirmations provided
+    s.client.attest(&order_id, &s.attestor1);
+    assert_eq!(s.client.get_order(&order_id).status, OrderStatus::Created);
 
     s.env.ledger().with_mut(|l| l.timestamp += 1000);
 
@@ -150,7 +181,8 @@ fn test_registry_duplicate_order_id_rejected() {
         &order_id,
         &s.buyer,
         &s.seller,
-        &s.attestor,
+        &s.attestors,
+        &s.threshold,
         &s.token,
         &s.amount,
         &deadline,
@@ -160,7 +192,8 @@ fn test_registry_duplicate_order_id_rejected() {
         &order_id,
         &s.buyer,
         &s.seller,
-        &s.attestor,
+        &s.attestors,
+        &s.threshold,
         &s.token,
         &s.amount,
         &deadline,
@@ -184,11 +217,15 @@ fn test_registry_claim_before_attestation_fails() {
         &order_id,
         &s.buyer,
         &s.seller,
-        &s.attestor,
+        &s.attestors,
+        &s.threshold,
         &s.token,
         &s.amount,
         &deadline,
     );
+
+    // 1 of 2 confirmations
+    s.client.attest(&order_id, &s.attestor1);
 
     let res = s.client.try_claim(&order_id);
     assert_eq!(res, Err(Ok(Error::WrongStatus)));
@@ -203,7 +240,8 @@ fn test_registry_reclaim_before_deadline_fails() {
         &order_id,
         &s.buyer,
         &s.seller,
-        &s.attestor,
+        &s.attestors,
+        &s.threshold,
         &s.token,
         &s.amount,
         &deadline,
@@ -222,14 +260,15 @@ fn test_registry_attest_after_deadline_fails() {
         &order_id,
         &s.buyer,
         &s.seller,
-        &s.attestor,
+        &s.attestors,
+        &s.threshold,
         &s.token,
         &s.amount,
         &deadline,
     );
 
     s.env.ledger().with_mut(|l| l.timestamp += 1000);
-    let res = s.client.try_attest(&order_id);
+    let res = s.client.try_attest(&order_id, &s.attestor1);
     assert_eq!(res, Err(Ok(Error::DeadlinePassed)));
 }
 
@@ -243,7 +282,8 @@ fn test_registry_invalid_parameters() {
         &701,
         &s.buyer,
         &s.seller,
-        &s.attestor,
+        &s.attestors,
+        &s.threshold,
         &s.token,
         &0,
         &deadline,
@@ -255,12 +295,39 @@ fn test_registry_invalid_parameters() {
         &702,
         &s.buyer,
         &s.seller,
-        &s.attestor,
+        &s.attestors,
+        &s.threshold,
         &s.token,
         &s.amount,
         &0,
     );
     assert_eq!(res2, Err(Ok(Error::DeadlineNotInFuture)));
+
+    // Zero threshold
+    let res3 = s.client.try_create_order(
+        &703,
+        &s.buyer,
+        &s.seller,
+        &s.attestors,
+        &0,
+        &s.token,
+        &s.amount,
+        &deadline,
+    );
+    assert_eq!(res3, Err(Ok(Error::ThresholdNotPositive)));
+
+    // Threshold exceeding attestors count
+    let res4 = s.client.try_create_order(
+        &704,
+        &s.buyer,
+        &s.seller,
+        &s.attestors,
+        &4,
+        &s.token,
+        &s.amount,
+        &deadline,
+    );
+    assert_eq!(res4, Err(Ok(Error::ThresholdExceedsAttestors)));
 }
 
 #[test]
@@ -273,7 +340,8 @@ fn test_registry_mutual_cancel_success() {
         &order_id,
         &s.buyer,
         &s.seller,
-        &s.attestor,
+        &s.attestors,
+        &s.threshold,
         &s.token,
         &s.amount,
         &deadline,
@@ -300,13 +368,15 @@ fn test_registry_cancel_after_attestation_fails() {
         &order_id,
         &s.buyer,
         &s.seller,
-        &s.attestor,
+        &s.attestors,
+        &s.threshold,
         &s.token,
         &s.amount,
         &deadline,
     );
 
-    s.client.attest(&order_id);
+    s.client.attest(&order_id, &s.attestor1);
+    s.client.attest(&order_id, &s.attestor2);
     let res = s.client.try_cancel(&order_id);
     assert_eq!(res, Err(Ok(Error::WrongStatus)));
 }
@@ -332,12 +402,14 @@ fn test_registry_cancel_requires_both_auths() {
     let client = EscrowRegistryContractClient::new(&env, &contract_id);
     let deadline = env.ledger().timestamp() + 1000;
     let order_id: u64 = 803;
+    let attestors = vec![&env, attestor];
 
     client.create_order(
         &order_id,
         &buyer,
         &seller,
-        &attestor,
+        &attestors,
+        &1,
         &token,
         &amount,
         &deadline,

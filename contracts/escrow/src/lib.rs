@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, token, Address, Env};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, token, Address, Env, Vec};
 
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17,7 +17,9 @@ pub enum OrderStatus {
 pub struct Order {
     pub buyer: Address,
     pub seller: Address,
-    pub attestor: Address,
+    pub attestors: Vec<Address>,
+    pub threshold: u32,
+    pub confirmations: Vec<Address>,
     pub token: Address,
     pub amount: i128,
     pub deadline: u64,
@@ -40,6 +42,10 @@ pub enum Error {
     WrongStatus = 5,
     DeadlineNotYetPassed = 6,
     DeadlinePassed = 7,
+    ThresholdNotPositive = 8,
+    ThresholdExceedsAttestors = 9,
+    AttestorNotAuthorized = 10,
+    AlreadyConfirmed = 11,
 }
 
 const LEDGERS_PER_DAY: u32 = 17280; // ~5s ledger close time
@@ -58,7 +64,8 @@ impl EscrowContract {
         env: Env,
         buyer: Address,
         seller: Address,
-        attestor: Address,
+        attestors: Vec<Address>,
+        threshold: u32,
         token: Address,
         amount: i128,
         deadline: u64,
@@ -72,6 +79,12 @@ impl EscrowContract {
         if deadline <= env.ledger().timestamp() {
             return Err(Error::DeadlineNotInFuture);
         }
+        if threshold == 0 {
+            return Err(Error::ThresholdNotPositive);
+        }
+        if threshold > attestors.len() {
+            return Err(Error::ThresholdExceedsAttestors);
+        }
 
         buyer.require_auth();
 
@@ -81,7 +94,9 @@ impl EscrowContract {
         let order = Order {
             buyer,
             seller,
-            attestor,
+            attestors,
+            threshold,
+            confirmations: Vec::new(&env),
             token,
             amount,
             deadline,
@@ -95,9 +110,10 @@ impl EscrowContract {
         Ok(())
     }
 
-    /// The designated attestor confirms delivery. Must happen before the
+    /// An authorized attestor confirms delivery. Must happen before the
     /// deadline and while the order is still in `Created` status.
-    pub fn attest(env: Env) -> Result<(), Error> {
+    /// Transitions status to `Attested` once `threshold` distinct confirmations are reached.
+    pub fn attest(env: Env, attestor: Address) -> Result<(), Error> {
         let mut order = Self::load(&env)?;
 
         if order.status != OrderStatus::Created {
@@ -106,10 +122,21 @@ impl EscrowContract {
         if env.ledger().timestamp() >= order.deadline {
             return Err(Error::DeadlinePassed);
         }
+        if !order.attestors.contains(&attestor) {
+            return Err(Error::AttestorNotAuthorized);
+        }
+        if order.confirmations.contains(&attestor) {
+            return Err(Error::AlreadyConfirmed);
+        }
 
-        order.attestor.require_auth();
+        attestor.require_auth();
 
-        order.status = OrderStatus::Attested;
+        order.confirmations.push_back(attestor);
+
+        if order.confirmations.len() >= order.threshold {
+            order.status = OrderStatus::Attested;
+        }
+
         env.storage().instance().set(&DataKey::Order, &order);
         env.storage()
             .instance()

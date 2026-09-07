@@ -2,9 +2,16 @@
 
 use super::*;
 use soroban_sdk::testutils::{Address as _, Ledger};
-use soroban_sdk::Env;
+use soroban_sdk::{vec, Env, Vec};
 
-fn create_token(env: &Env, admin: &Address) -> (Address, token::StellarAssetClient<'static>, token::Client<'static>) {
+fn create_token(
+    env: &Env,
+    admin: &Address,
+) -> (
+    Address,
+    token::StellarAssetClient<'static>,
+    token::Client<'static>,
+) {
     let sac = env.register_stellar_asset_contract_v2(admin.clone());
     let asset_client = token::StellarAssetClient::new(env, &sac.address());
     let token_client = token::Client::new(env, &sac.address());
@@ -18,7 +25,11 @@ struct TestSetup {
     client: EscrowContractClient<'static>,
     buyer: Address,
     seller: Address,
-    attestor: Address,
+    attestor1: Address,
+    attestor2: Address,
+    attestor3: Address,
+    attestors: Vec<Address>,
+    threshold: u32,
     token: Address,
     token_client: token::Client<'static>,
     amount: i128,
@@ -31,7 +42,9 @@ fn setup(deadline_offset_secs: u64) -> TestSetup {
     let admin = Address::generate(&env);
     let buyer = Address::generate(&env);
     let seller = Address::generate(&env);
-    let attestor = Address::generate(&env);
+    let attestor1 = Address::generate(&env);
+    let attestor2 = Address::generate(&env);
+    let attestor3 = Address::generate(&env);
 
     let (token, asset_client, token_client) = create_token(&env, &admin);
     let amount: i128 = 1_000_000_000; // 100 XLM in stroops
@@ -41,7 +54,17 @@ fn setup(deadline_offset_secs: u64) -> TestSetup {
     let client = EscrowContractClient::new(&env, &contract_id);
 
     let deadline = env.ledger().timestamp() + deadline_offset_secs;
-    client.create(&buyer, &seller, &attestor, &token, &amount, &deadline);
+    let attestors = vec![&env, attestor1.clone(), attestor2.clone(), attestor3.clone()];
+    let threshold = 2; // 2-of-3 threshold
+    client.create(
+        &buyer,
+        &seller,
+        &attestors,
+        &threshold,
+        &token,
+        &amount,
+        &deadline,
+    );
 
     TestSetup {
         env,
@@ -49,7 +72,11 @@ fn setup(deadline_offset_secs: u64) -> TestSetup {
         client,
         buyer,
         seller,
-        attestor,
+        attestor1,
+        attestor2,
+        attestor3,
+        attestors,
+        threshold,
         token,
         token_client,
         amount,
@@ -57,16 +84,25 @@ fn setup(deadline_offset_secs: u64) -> TestSetup {
 }
 
 #[test]
-fn test_full_happy_path_attest_then_claim() {
+fn test_full_happy_path_2_of_3_attest_then_claim() {
     let s = setup(1000);
 
     let order = s.client.get_order();
     assert_eq!(order.status, OrderStatus::Created);
     assert_eq!(s.token_client.balance(&s.contract_id), s.amount);
+    assert_eq!(order.confirmations.len(), 0);
 
-    s.client.attest();
+    // First attestation: still Created (1 of 2 threshold)
+    s.client.attest(&s.attestor1);
+    let order = s.client.get_order();
+    assert_eq!(order.status, OrderStatus::Created);
+    assert_eq!(order.confirmations.len(), 1);
+
+    // Second attestation: transitions to Attested (2 of 2 threshold)
+    s.client.attest(&s.attestor3);
     let order = s.client.get_order();
     assert_eq!(order.status, OrderStatus::Attested);
+    assert_eq!(order.confirmations.len(), 2);
 
     s.client.claim();
     let order = s.client.get_order();
@@ -76,11 +112,45 @@ fn test_full_happy_path_attest_then_claim() {
 }
 
 #[test]
-fn test_reclaim_after_deadline_with_no_attestation() {
+fn test_single_attestor_confirming_twice_fails() {
     let s = setup(1000);
 
+    s.client.attest(&s.attestor1);
+    let order = s.client.get_order();
+    assert_eq!(order.status, OrderStatus::Created);
+    assert_eq!(order.confirmations.len(), 1);
+
+    // Duplicate attestation by same attestor
+    let result = s.client.try_attest(&s.attestor1);
+    assert_eq!(result, Err(Ok(Error::AlreadyConfirmed)));
+
+    // Order status remains Created and confirmations count is still 1
+    let order = s.client.get_order();
+    assert_eq!(order.status, OrderStatus::Created);
+    assert_eq!(order.confirmations.len(), 1);
+}
+
+#[test]
+fn test_unauthorized_attestor_rejected() {
+    let s = setup(1000);
+    let outsider = Address::generate(&s.env);
+
+    let result = s.client.try_attest(&outsider);
+    assert_eq!(result, Err(Ok(Error::AttestorNotAuthorized)));
+}
+
+#[test]
+fn test_reclaim_after_deadline_with_partial_attestation() {
+    let s = setup(1000);
+
+    // 1 of 2 attestations provided
+    s.client.attest(&s.attestor2);
+    assert_eq!(s.client.get_order().status, OrderStatus::Created);
+
+    // Advance ledger past deadline
     s.env.ledger().with_mut(|l| l.timestamp += 2000);
 
+    // Buyer reclaims
     s.client.reclaim();
     let order = s.client.get_order();
     assert_eq!(order.status, OrderStatus::Reclaimed);
@@ -89,8 +159,11 @@ fn test_reclaim_after_deadline_with_no_attestation() {
 }
 
 #[test]
-fn test_claim_before_attestation_fails() {
+fn test_claim_before_threshold_attestation_fails() {
     let s = setup(1000);
+    // 1 of 2 confirmations
+    s.client.attest(&s.attestor1);
+
     let result = s.client.try_claim();
     assert_eq!(result, Err(Ok(Error::WrongStatus)));
 }
@@ -106,26 +179,69 @@ fn test_reclaim_before_deadline_fails() {
 fn test_attest_after_deadline_fails() {
     let s = setup(1000);
     s.env.ledger().with_mut(|l| l.timestamp += 2000);
-    let result = s.client.try_attest();
+    let result = s.client.try_attest(&s.attestor1);
     assert_eq!(result, Err(Ok(Error::DeadlinePassed)));
 }
 
 #[test]
-fn test_double_attest_fails() {
+fn test_attest_after_threshold_already_reached_fails() {
     let s = setup(1000);
-    s.client.attest();
-    let result = s.client.try_attest();
+    s.client.attest(&s.attestor1);
+    s.client.attest(&s.attestor2);
+    assert_eq!(s.client.get_order().status, OrderStatus::Attested);
+
+    // Order is now Attested; subsequent attestation by 3rd attestor rejected
+    let result = s.client.try_attest(&s.attestor3);
     assert_eq!(result, Err(Ok(Error::WrongStatus)));
 }
 
 #[test]
 fn test_reclaim_after_claim_fails() {
     let s = setup(1000);
-    s.client.attest();
+    s.client.attest(&s.attestor1);
+    s.client.attest(&s.attestor2);
     s.client.claim();
     s.env.ledger().with_mut(|l| l.timestamp += 2000);
     let result = s.client.try_reclaim();
     assert_eq!(result, Err(Ok(Error::WrongStatus)));
+}
+
+#[test]
+fn test_create_rejects_zero_threshold() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let attestor = Address::generate(&env);
+    let (token, _asset_client, _token_client) = create_token(&env, &admin);
+
+    let contract_id = env.register(EscrowContract, ());
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let deadline = env.ledger().timestamp() + 1000;
+    let attestors = vec![&env, attestor];
+
+    let result = client.try_create(&buyer, &seller, &attestors, &0, &token, &100, &deadline);
+    assert_eq!(result, Err(Ok(Error::ThresholdNotPositive)));
+}
+
+#[test]
+fn test_create_rejects_threshold_greater_than_attestors() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let attestor = Address::generate(&env);
+    let (token, _asset_client, _token_client) = create_token(&env, &admin);
+
+    let contract_id = env.register(EscrowContract, ());
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let deadline = env.ledger().timestamp() + 1000;
+    let attestors = vec![&env, attestor];
+
+    let result = client.try_create(&buyer, &seller, &attestors, &2, &token, &100, &deadline);
+    assert_eq!(result, Err(Ok(Error::ThresholdExceedsAttestors)));
 }
 
 #[test]
@@ -141,8 +257,9 @@ fn test_create_rejects_non_positive_amount() {
     let contract_id = env.register(EscrowContract, ());
     let client = EscrowContractClient::new(&env, &contract_id);
     let deadline = env.ledger().timestamp() + 1000;
+    let attestors = vec![&env, attestor];
 
-    let result = client.try_create(&buyer, &seller, &attestor, &token, &0, &deadline);
+    let result = client.try_create(&buyer, &seller, &attestors, &1, &token, &0, &deadline);
     assert_eq!(result, Err(Ok(Error::AmountNotPositive)));
 }
 
@@ -158,8 +275,9 @@ fn test_create_rejects_deadline_in_the_past() {
 
     let contract_id = env.register(EscrowContract, ());
     let client = EscrowContractClient::new(&env, &contract_id);
+    let attestors = vec![&env, attestor];
 
-    let result = client.try_create(&buyer, &seller, &attestor, &token, &100, &0);
+    let result = client.try_create(&buyer, &seller, &attestors, &1, &token, &100, &0);
     assert_eq!(result, Err(Ok(Error::DeadlineNotInFuture)));
 }
 
@@ -181,7 +299,8 @@ fn test_mutual_cancel_success() {
 #[test]
 fn test_cancel_after_attestation_fails() {
     let s = setup(1000);
-    s.client.attest();
+    s.client.attest(&s.attestor1);
+    s.client.attest(&s.attestor2);
     let result = s.client.try_cancel();
     assert_eq!(result, Err(Ok(Error::WrongStatus)));
 }
@@ -189,7 +308,8 @@ fn test_cancel_after_attestation_fails() {
 #[test]
 fn test_cancel_after_claim_fails() {
     let s = setup(1000);
-    s.client.attest();
+    s.client.attest(&s.attestor1);
+    s.client.attest(&s.attestor2);
     s.client.claim();
     let result = s.client.try_cancel();
     assert_eq!(result, Err(Ok(Error::WrongStatus)));
@@ -224,8 +344,9 @@ fn test_cancel_requires_both_auths() {
     let contract_id = env.register(EscrowContract, ());
     let client = EscrowContractClient::new(&env, &contract_id);
     let deadline = env.ledger().timestamp() + 1000;
+    let attestors = vec![&env, attestor];
 
-    client.create(&buyer, &seller, &attestor, &token, &amount, &deadline);
+    client.create(&buyer, &seller, &attestors, &1, &token, &amount, &deadline);
 
     // Mock ONLY buyer authorization
     env.mock_auths(&[MockAuth {

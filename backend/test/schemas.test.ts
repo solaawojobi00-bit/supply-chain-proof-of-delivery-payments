@@ -112,4 +112,52 @@ describe("Schema Validation (schemas.ts)", () => {
       expect(formatted).toContain("valid Stellar contract address");
     }
   });
+
+  it("validates M-of-N multi-attestor array and threshold", () => {
+    const futureDeadline = String(Math.floor(Date.now() / 1000) + 3600);
+    const attestor2 = Keypair.random();
+    const attestor3 = Keypair.random();
+
+    // Valid 2-of-3 setup
+    const validMulti = createOrderSchema.safeParse({
+      sellerAddress: sellerKeypair.publicKey(),
+      attestors: [attestorKeypair.publicKey(), attestor2.publicKey(), attestor3.publicKey()],
+      threshold: 2,
+      amountStroops: "10000000",
+      deadlineSeconds: futureDeadline,
+    });
+    expect(validMulti.success).toBe(true);
+
+    // Invalid threshold (exceeds attestors count)
+    const invalidThreshold = createOrderSchema.safeParse({
+      sellerAddress: sellerKeypair.publicKey(),
+      attestors: [attestorKeypair.publicKey(), attestor2.publicKey()],
+      threshold: 3,
+      amountStroops: "10000000",
+      deadlineSeconds: futureDeadline,
+    });
+    expect(invalidThreshold.success).toBe(false);
+    if (!invalidThreshold.success) {
+      const formatted = formatZodError(invalidThreshold.error);
+      expect(formatted).toContain("threshold");
+    }
+
+    // Invalid threshold = 0
+    const zeroThreshold = createOrderSchema.safeParse({
+      sellerAddress: sellerKeypair.publicKey(),
+      attestors: [attestorKeypair.publicKey()],
+      threshold: 0,
+      amountStroops: "10000000",
+      deadlineSeconds: futureDeadline,
+    });
+    expect(zeroThreshold.success).toBe(false);
+
+    // Missing both attestors and attestorAddress
+    const missingBoth = createOrderSchema.safeParse({
+      sellerAddress: sellerKeypair.publicKey(),
+      amountStroops: "10000000",
+      deadlineSeconds: futureDeadline,
+    });
+    expect(missingBoth.success).toBe(false);
+  });
 });

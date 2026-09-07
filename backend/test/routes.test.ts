@@ -21,7 +21,9 @@ vi.mock("../src/contractOps.js", () => ({
   readOnChainOrder: vi.fn(async () => ({
     buyer: buyerKeypair.publicKey(),
     seller: sellerKeypair.publicKey(),
-    attestor: attestorKeypair.publicKey(),
+    attestors: [attestorKeypair.publicKey()],
+    threshold: 1,
+    confirmations: [],
     token: "mock-token-id",
     amount: 10000000n,
     deadline: 9999999999n,
@@ -30,7 +32,9 @@ vi.mock("../src/contractOps.js", () => ({
   readOnChainRegistryOrder: vi.fn(async () => ({
     buyer: buyerKeypair.publicKey(),
     seller: sellerKeypair.publicKey(),
-    attestor: attestorKeypair.publicKey(),
+    attestors: [attestorKeypair.publicKey()],
+    threshold: 1,
+    confirmations: [],
     token: "mock-token-id",
     amount: 10000000n,
     deadline: 9999999999n,
@@ -327,5 +331,46 @@ describe("API Routes (routes.ts)", () => {
     const body = (await cancelRes.json()) as { error: string };
     expect(body.error).toContain("Attested");
     expect(body.error).toContain("Created");
+  });
+
+  it("POST /orders with attestors array and POST /orders/:id/attest with body", async () => {
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
+    const createRes = await fetch(`${baseUrl}/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sellerAddress: sellerKeypair.publicKey(),
+        attestors: [attestorKeypair.publicKey(), buyerKeypair.publicKey()],
+        threshold: 2,
+        amountStroops: "20000000",
+        deadlineSeconds: deadline.toString(),
+      }),
+    });
+    expect(createRes.status).toBe(201);
+    const order = (await createRes.json()) as any;
+    expect(order.threshold).toBe(2);
+    expect(order.attestors).toEqual([attestorKeypair.publicKey(), buyerKeypair.publicKey()]);
+
+    // First attestation
+    const attest1Res = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ attestorAddress: attestorKeypair.publicKey() }),
+    });
+    expect(attest1Res.status).toBe(200);
+    const orderAttest1 = (await attest1Res.json()) as any;
+    expect(orderAttest1.status).toBe("Created");
+    expect(orderAttest1.confirmations).toEqual([attestorKeypair.publicKey()]);
+
+    // Second attestation completes threshold
+    const attest2Res = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ attestorAddress: buyerKeypair.publicKey() }),
+    });
+    expect(attest2Res.status).toBe(200);
+    const orderAttest2 = (await attest2Res.json()) as any;
+    expect(orderAttest2.status).toBe("Attested");
+    expect(orderAttest2.confirmations).toHaveLength(2);
   });
 });
