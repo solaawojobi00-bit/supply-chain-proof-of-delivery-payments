@@ -50,7 +50,10 @@ router.post(
   asyncHandler(async (req, res) => {
     const { sellerAddress, attestorAddress, amountStroops, deadlineSeconds } = req.body ?? {};
     if (!sellerAddress || !attestorAddress || !amountStroops || !deadlineSeconds) {
-      throw new HttpError(400, "sellerAddress, attestorAddress, amountStroops, and deadlineSeconds are required");
+      throw new HttpError(
+        400,
+        "sellerAddress, attestorAddress, amountStroops, and deadlineSeconds are required",
+      );
     }
     const order = await createOrder({
       sellerAddress,

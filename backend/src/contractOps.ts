@@ -1,5 +1,10 @@
 import { Keypair } from "@stellar/stellar-sdk";
-import { AssembledTransaction, Client as ContractClient, KeypairSigner, Result } from "@stellar/stellar-sdk/contract";
+import {
+  AssembledTransaction,
+  Client as ContractClient,
+  KeypairSigner,
+  Result,
+} from "@stellar/stellar-sdk/contract";
 import { config } from "./config.js";
 import { deployerKeypair } from "./keys.js";
 
@@ -56,7 +61,10 @@ function signerFor(keypair: Keypair) {
 }
 
 /** Deploys a fresh instance of the already-uploaded escrow WASM. One instance per order. */
-export async function deployEscrowContract(): Promise<{ contractId: string; txHash: string | undefined }> {
+export async function deployEscrowContract(): Promise<{
+  contractId: string;
+  txHash: string | undefined;
+}> {
   const assembled = await ContractClient.deploy<ContractClient & EscrowContract>(null, {
     ...baseClientOptions,
     wasmHash: config.wasmHash,
@@ -100,7 +108,10 @@ export async function callCreate(
   return sent.sendTransactionResponse?.hash;
 }
 
-export async function callAttest(contractId: string, attestor: Keypair): Promise<string | undefined> {
+export async function callAttest(
+  contractId: string,
+  attestor: Keypair,
+): Promise<string | undefined> {
   const client = await clientFor(contractId, attestor);
   const tx = await client.attest();
   const sent = await tx.signAndSend();
