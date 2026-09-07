@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^16.2.0",
+    "@stellar/stellar-sdk": "^17.0.1",
     "better-sqlite3": "^13.0.2",
     "dotenv": "^16.4.5",
     "express": "^5.2.1"
