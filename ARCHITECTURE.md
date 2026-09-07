@@ -173,22 +173,27 @@ backend's job is:
    from submitted tx results) to answer status queries.
 6. Expose everything over a small REST API (Express).
 
-Signing keys: for Phase 1 demo purposes, the backend holds all three
-parties' testnet keypairs (buyer, seller, attestor) server-side, since there
-is no wallet-connect UI yet — this is explicitly a Phase 1 simplification
-for demonstrating the full flow end-to-end, not a production custody design.
-A real deployment would have each party sign client-side with their own
-wallet; this is tracked as a Phase 2+ issue.
+Signing keys: the backend supports both server-held demo keys (for automated testing and script demos) and **client-side wallet signing** (SEP-43 smart wallets / Freighter browser extension):
 
-### API surface (Phase 1)
+- **Server-Held Keys**: Configured in `.env` (`BUYER_SECRET_KEY`, `SELLER_SECRET_KEY`, `ATTESTOR_SECRET_KEY`, `ARBITER_SECRET_KEY`) for seamless CLI demo execution.
+- **Client-Side Signing**: When invoked with `?unsigned=true` (or via `POST /orders/:id/build-tx`), the backend builds and simulates an unsigned transaction XDR envelope using the caller's public key. The client signs with Freighter or an SEP-43 wallet and submits the signed XDR to `POST /tx/submit` or `POST /orders/:id/submit`.
 
-| Endpoint                   | Effect                                                                                                                                |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /orders`             | Create order: deploys contract, calls `create()`, persists order row. Body: `sellerAddress, attestorAddress, amount, deadlineSeconds` |
-| `GET /orders/:id`          | Return current order status and details                                                                                               |
-| `POST /orders/:id/attest`  | Attestor confirms delivery: calls `attest()`                                                                                          |
-| `POST /orders/:id/claim`   | Seller claims funds: calls `claim()`                                                                                                  |
-| `POST /orders/:id/reclaim` | Buyer reclaims funds: calls `reclaim()` (only succeeds past deadline)                                                                 |
+### API surface
+
+| Endpoint                    | Effect                                                                                                     |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `POST /orders`              | Create order: deploys/registers contract, calls `create()`, persists order row (supports `?unsigned=true`) |
+| `GET /orders`               | List all orders                                                                                            |
+| `GET /orders/:id`           | Return current order status and details (including live on-chain contract state)                           |
+| `POST /orders/:id/attest`   | Attestor confirms delivery: calls `attest()` (supports `?unsigned=true`)                                   |
+| `POST /orders/:id/claim`    | Seller claims funds: calls `claim()` (supports `?unsigned=true`)                                           |
+| `POST /orders/:id/reclaim`  | Buyer reclaims funds: calls `reclaim()` (only succeeds past deadline; supports `?unsigned=true`)           |
+| `POST /orders/:id/cancel`   | Mutual cancellation before attestation (supports `?unsigned=true`)                                         |
+| `POST /orders/:id/dispute`  | Buyer raises dispute before claim (supports `?unsigned=true`)                                              |
+| `POST /orders/:id/resolve`  | Arbiter resolves dispute (supports `?unsigned=true`)                                                       |
+| `POST /orders/:id/build-tx` | Build an unsigned transaction envelope for any action                                                      |
+| `POST /orders/:id/submit`   | Submit signed transaction XDR for order and sync order status in DB                                        |
+| `POST /tx/submit`           | Submit arbitrary signed transaction XDR to Soroban network                                                 |
 
 ## Data flow: full order lifecycle
 

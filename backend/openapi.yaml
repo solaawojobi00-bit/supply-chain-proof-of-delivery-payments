@@ -373,8 +373,104 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Transaction execution failure
+  /orders/{id}/build-tx:
+    post:
+      summary: Build unsigned transaction XDR for client-side wallet signing
+      description: Returns an unsigned, simulated transaction XDR for the specified lifecycle action (attest, claim, reclaim, cancel, dispute, resolve).
+      operationId: buildOrderTx
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: UUID of the order
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BuildTxRequest"
+      responses:
+        "200":
+          description: Unsigned transaction XDR generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnsignedTxResponse"
+        "400":
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Order state conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /orders/{id}/submit:
+    post:
+      summary: Submit a client-signed transaction for an order
+      description: Submits a transaction signed with a client-side SEP-43 wallet (e.g. Freighter) and updates the order state.
+      operationId: submitOrderTx
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: UUID of the order
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitSignedTxRequest"
+      responses:
+        "200":
+          description: Transaction submitted successfully and order state updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmitSignedTxResponse"
+        "400":
+          description: Invalid signed XDR or submission error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /tx/submit:
+    post:
+      summary: Submit any client-signed transaction
+      description: Submits a transaction signed by a client-side wallet to the Soroban RPC network and syncs any associated order tracking.
+      operationId: submitSignedTx
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitSignedTxRequest"
+      responses:
+        "200":
+          description: Transaction successfully submitted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmitSignedTxResponse"
+        "400":
+          description: Invalid signed XDR or submission error
           content:
             application/json:
               schema:
@@ -671,3 +767,102 @@ components:
           type: string
           description: Error message describing the reason for failure
           example: "Order 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d not found"
+
+    BuildTxRequest:
+      type: object
+      required:
+        - action
+      properties:
+        action:
+          type: string
+          enum:
+            - attest
+            - claim
+            - reclaim
+            - cancel
+            - dispute
+            - resolve
+          description: Lifecycle action to build transaction XDR for
+          example: "attest"
+        attestorAddress:
+          type: string
+          description: Stellar public address (G...) of the attestor if action is attest
+          example: "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"
+        callerAddress:
+          type: string
+          description: Optional Stellar public address (G...) of the signing party
+          example: "GB6NVEN5HSUBKMYCE5ZOWSK5RPO5RDTBWTJHQ35YKVGFFL3U2NOSVNQI"
+        releaseToSeller:
+          type: boolean
+          description: Required when action is resolve (true to release to seller, false to refund buyer)
+          example: true
+
+    UnsignedTxResponse:
+      type: object
+      required:
+        - unsignedTxXdr
+        - action
+      properties:
+        unsignedTxXdr:
+          type: string
+          description: Base64-encoded unsigned simulated transaction XDR ready for SEP-43 / Freighter signing
+          example: "AAAAAgAAAAA..."
+        action:
+          type: string
+          description: Lifecycle action for which the transaction was built
+          example: "attest"
+        orderId:
+          type: string
+          format: uuid
+          description: Order identifier
+          example: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+        contractId:
+          type: string
+          description: Stellar contract address (C...)
+          example: "CA3D5KRYMCMUZGAPOETEZ2NZNOME4H664X4UIRGFW6UR47X7U6GFF6MS"
+        order:
+          $ref: "#/components/schemas/Order"
+
+    SubmitSignedTxRequest:
+      type: object
+      required:
+        - signedXdr
+      properties:
+        signedXdr:
+          type: string
+          description: Base64-encoded signed transaction XDR from wallet
+          example: "AAAAAgAAAAA..."
+        orderId:
+          type: string
+          format: uuid
+          description: Optional order identifier to associate with the submission
+          example: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+        action:
+          type: string
+          enum:
+            - create
+            - attest
+            - claim
+            - reclaim
+            - cancel
+            - dispute
+            - resolve
+          description: Optional lifecycle action corresponding to the signed transaction
+          example: "attest"
+
+    SubmitSignedTxResponse:
+      type: object
+      required:
+        - txHash
+        - status
+      properties:
+        txHash:
+          type: string
+          description: Stellar transaction hash
+          example: "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
+        status:
+          type: string
+          description: On-chain transaction status
+          example: "SUCCESS"
+        order:
+          $ref: "#/components/schemas/Order"

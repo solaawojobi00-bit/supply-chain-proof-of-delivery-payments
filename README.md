@@ -118,21 +118,66 @@ The escrow smart contracts and REST API accept any Stellar Asset Contract (SAC) 
    npm run demo:claim -- --token=<TOKEN_CONTRACT_ID>
    ```
 
+### Client-Side Wallet Signing (Freighter / SEP-43)
+
+In addition to backend-held demo keypairs, the backend fully supports non-custodial client-side wallet signing (e.g. Freighter, SEP-43 smart wallets):
+
+1. **Request Unsigned Transaction XDR**:
+   Any state-changing endpoint can return an unsigned transaction envelope by adding `?unsigned=true` (or header `x-unsigned: true` / query `POST /orders/:id/build-tx`):
+
+   ```bash
+   # Example: Build an unsigned attest transaction for an external wallet
+   curl -X POST "http://localhost:3000/orders/1/attest?unsigned=true" \
+     -H "Content-Type: application/json" \
+     -d '{"attestorAddress": "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"}'
+   ```
+
+   _Response:_
+
+   ```json
+   {
+     "unsignedTx": "AAAAAgAAAAA...",
+     "networkPassphrase": "Test SDF Network ; September 2015",
+     "action": "attest",
+     "orderId": 1
+   }
+   ```
+
+2. **Sign Client-Side with Freighter**:
+
+   ```typescript
+   import { signTransaction } from "@stellar/freighter-api";
+
+   const { signedTxXdr } = await signTransaction(unsignedTx, {
+     networkPassphrase,
+   });
+   ```
+
+3. **Submit Signed XDR**:
+   ```bash
+   curl -X POST "http://localhost:3000/tx/submit" \
+     -H "Content-Type: application/json" \
+     -d '{"signedXdr": "AAAAAgAAAAA...", "orderId": 1, "action": "attest"}'
+   ```
+
 ## API
 
 A complete machine-readable OpenAPI 3.0 specification is available at [`backend/openapi.yaml`](backend/openapi.yaml).
 
-| Endpoint                   | Effect                                                                                                                                                              |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /orders`             | Create an order: `{ sellerAddress, attestorAddress?, attestors?: string[], threshold?: number, arbiterAddress?, amountStroops, deadlineSeconds, tokenContractId? }` |
-| `GET /orders`              | List all orders                                                                                                                                                     |
-| `GET /orders/:id`          | Order status, including a live on-chain read                                                                                                                        |
-| `POST /orders/:id/attest`  | Authorized attestor confirms delivery (optional body: `{ attestorAddress }`; transitions to Attested when threshold is met)                                         |
-| `POST /orders/:id/claim`   | Seller claims the escrowed funds                                                                                                                                    |
-| `POST /orders/:id/reclaim` | Buyer reclaims funds once the deadline has passed                                                                                                                   |
-| `POST /orders/:id/cancel`  | Buyer and seller mutually cancel order before attestation, refunding buyer                                                                                          |
-| `POST /orders/:id/dispute` | Buyer disputes an attested order before claim, freezing the funds in Disputed state                                                                                 |
-| `POST /orders/:id/resolve` | Designated arbiter resolves a dispute (`{ releaseToSeller: boolean }`), paying the seller or refunding the buyer                                                    |
+| Endpoint                    | Effect                                                                                                                                                                                                         |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /orders`              | Create an order: `{ buyerAddress?, sellerAddress, attestorAddress?, attestors?: string[], threshold?: number, arbiterAddress?, amountStroops, deadlineSeconds, tokenContractId? }` (supports `?unsigned=true`) |
+| `GET /orders`               | List all orders                                                                                                                                                                                                |
+| `GET /orders/:id`           | Order status, including a live on-chain read                                                                                                                                                                   |
+| `POST /orders/:id/attest`   | Authorized attestor confirms delivery (optional body: `{ attestorAddress }`; supports `?unsigned=true`)                                                                                                        |
+| `POST /orders/:id/claim`    | Seller claims the escrowed funds (supports `?unsigned=true`)                                                                                                                                                   |
+| `POST /orders/:id/reclaim`  | Buyer reclaims funds once the deadline has passed (supports `?unsigned=true`)                                                                                                                                  |
+| `POST /orders/:id/cancel`   | Buyer and seller mutually cancel order before attestation, refunding buyer (supports `?unsigned=true`)                                                                                                         |
+| `POST /orders/:id/dispute`  | Buyer disputes an attested order before claim, freezing the funds in Disputed state (supports `?unsigned=true`)                                                                                                |
+| `POST /orders/:id/resolve`  | Designated arbiter resolves a dispute (`{ releaseToSeller: boolean }`), paying the seller or refunding the buyer (supports `?unsigned=true`)                                                                   |
+| `POST /orders/:id/build-tx` | Build an unsigned transaction envelope for any action (`{ action: "attest"                                                                                                                                     | "claim" | "reclaim" | "cancel" | "dispute" | "resolve", ... }`) |
+| `POST /orders/:id/submit`   | Submit a signed transaction XDR for a specific order and update status                                                                                                                                         |
+| `POST /tx/submit`           | Submit an arbitrary signed transaction XDR to the Soroban network and sync order state                                                                                                                         |
 
 ## Development & Quality Checks
 

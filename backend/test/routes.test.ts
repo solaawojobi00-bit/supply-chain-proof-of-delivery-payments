@@ -22,6 +22,21 @@ vi.mock("../src/contractOps.js", () => ({
   callRegistryCancel: vi.fn(async () => "mock-reg-cancel-hash"),
   callRegistryDispute: vi.fn(async () => "mock-reg-dispute-hash"),
   callRegistryResolveDispute: vi.fn(async () => "mock-reg-resolve-hash"),
+  buildUnsignedCreateTx: vi.fn(async () => "mock-unsigned-create-xdr"),
+  buildUnsignedAttestTx: vi.fn(async () => "mock-unsigned-attest-xdr"),
+  buildUnsignedClaimTx: vi.fn(async () => "mock-unsigned-claim-xdr"),
+  buildUnsignedReclaimTx: vi.fn(async () => "mock-unsigned-reclaim-xdr"),
+  buildUnsignedCancelTx: vi.fn(async () => "mock-unsigned-cancel-xdr"),
+  buildUnsignedDisputeTx: vi.fn(async () => "mock-unsigned-dispute-xdr"),
+  buildUnsignedResolveTx: vi.fn(async () => "mock-unsigned-resolve-xdr"),
+  buildRegistryUnsignedCreateTx: vi.fn(async () => "mock-unsigned-create-xdr"),
+  buildRegistryUnsignedAttestTx: vi.fn(async () => "mock-unsigned-attest-xdr"),
+  buildRegistryUnsignedClaimTx: vi.fn(async () => "mock-unsigned-claim-xdr"),
+  buildRegistryUnsignedReclaimTx: vi.fn(async () => "mock-unsigned-reclaim-xdr"),
+  buildRegistryUnsignedCancelTx: vi.fn(async () => "mock-unsigned-cancel-xdr"),
+  buildRegistryUnsignedDisputeTx: vi.fn(async () => "mock-unsigned-dispute-xdr"),
+  buildRegistryUnsignedResolveTx: vi.fn(async () => "mock-unsigned-resolve-xdr"),
+  submitSignedXDR: vi.fn(async () => ({ txHash: "mock-submit-tx-hash", status: "SUCCESS" })),
   readOnChainOrder: vi.fn(async () => ({
     buyer: buyerKeypair.publicKey(),
     seller: sellerKeypair.publicKey(),
@@ -416,5 +431,106 @@ describe("API Routes (routes.ts)", () => {
     expect(resolvedOrder.status).toBe("Claimed");
     expect(resolvedOrder.lifecycle).toBe("claimed");
     expect(resolvedOrder.txHashes.resolve).toBe("mock-resolve-hash");
+  });
+
+  describe("Client-Side Wallet Signing Routes (?unsigned=true, /build-tx, /tx/submit)", () => {
+    it("POST /orders?unsigned=true returns unsigned transaction XDR and order object", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const res = await fetch(`${baseUrl}/orders?unsigned=true`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestorAddress: attestorKeypair.publicKey(),
+          amountStroops: "10000000",
+          deadlineSeconds: deadline.toString(),
+        }),
+      });
+      expect(res.status).toBe(201);
+      const data = (await res.json()) as any;
+      expect(data.unsignedTxXdr).toBe("mock-unsigned-create-xdr");
+      expect(data.action).toBe("create");
+      expect(data.order.id).toBeDefined();
+      expect(data.order.status).toBe("Created");
+    });
+
+    it("POST /orders/:id/attest?unsigned=true returns unsigned attest XDR", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const createRes = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestorAddress: attestorKeypair.publicKey(),
+          amountStroops: "10000000",
+          deadlineSeconds: deadline.toString(),
+        }),
+      });
+      const order = (await createRes.json()) as any;
+
+      const attestRes = await fetch(`${baseUrl}/orders/${order.id}/attest?unsigned=true`, {
+        method: "POST",
+      });
+      expect(attestRes.status).toBe(200);
+      const data = (await attestRes.json()) as any;
+      expect(data.unsignedTxXdr).toBe("mock-unsigned-attest-xdr");
+      expect(data.action).toBe("attest");
+      expect(data.orderId).toBe(order.id);
+    });
+
+    it("POST /orders/:id/build-tx builds unsigned XDR for requested action", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const createRes = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestorAddress: attestorKeypair.publicKey(),
+          amountStroops: "10000000",
+          deadlineSeconds: deadline.toString(),
+        }),
+      });
+      const order = (await createRes.json()) as any;
+
+      const buildRes = await fetch(`${baseUrl}/orders/${order.id}/build-tx`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "attest" }),
+      });
+      expect(buildRes.status).toBe(200);
+      const data = (await buildRes.json()) as any;
+      expect(data.unsignedTxXdr).toBe("mock-unsigned-attest-xdr");
+      expect(data.action).toBe("attest");
+    });
+
+    it("POST /tx/submit accepts signed XDR, submits, and updates order", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const createRes = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestorAddress: attestorKeypair.publicKey(),
+          amountStroops: "10000000",
+          deadlineSeconds: deadline.toString(),
+        }),
+      });
+      const order = (await createRes.json()) as any;
+
+      const submitRes = await fetch(`${baseUrl}/tx/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          signedXdr: "mock-signed-base64-xdr",
+          orderId: order.id,
+          action: "attest",
+        }),
+      });
+      expect(submitRes.status).toBe(200);
+      const submitData = (await submitRes.json()) as any;
+      expect(submitData.txHash).toBe("mock-submit-tx-hash");
+      expect(submitData.status).toBe("SUCCESS");
+      expect(submitData.order.id).toBe(order.id);
+    });
   });
 });

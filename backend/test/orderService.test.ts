@@ -11,12 +11,30 @@ vi.mock("../src/contractOps.js", () => ({
   callAttest: vi.fn(async () => "mock-attest-tx-hash"),
   callClaim: vi.fn(async () => "mock-claim-tx-hash"),
   callReclaim: vi.fn(async () => "mock-reclaim-tx-hash"),
+  callCancel: vi.fn(async () => "mock-cancel-tx-hash"),
   callDispute: vi.fn(async () => "mock-dispute-tx-hash"),
   callResolveDispute: vi.fn(async () => "mock-resolve-tx-hash"),
+  buildUnsignedCreateTx: vi.fn(async () => "mock-unsigned-create-xdr"),
+  buildUnsignedAttestTx: vi.fn(async () => "mock-unsigned-attest-xdr"),
+  buildUnsignedClaimTx: vi.fn(async () => "mock-unsigned-claim-xdr"),
+  buildUnsignedReclaimTx: vi.fn(async () => "mock-unsigned-reclaim-xdr"),
+  buildUnsignedCancelTx: vi.fn(async () => "mock-unsigned-cancel-xdr"),
+  buildUnsignedDisputeTx: vi.fn(async () => "mock-unsigned-dispute-xdr"),
+  buildUnsignedResolveTx: vi.fn(async () => "mock-unsigned-resolve-xdr"),
+  buildRegistryUnsignedCreateTx: vi.fn(async () => "mock-unsigned-create-xdr"),
+  buildRegistryUnsignedAttestTx: vi.fn(async () => "mock-unsigned-attest-xdr"),
+  buildRegistryUnsignedClaimTx: vi.fn(async () => "mock-unsigned-claim-xdr"),
+  buildRegistryUnsignedReclaimTx: vi.fn(async () => "mock-unsigned-reclaim-xdr"),
+  buildRegistryUnsignedCancelTx: vi.fn(async () => "mock-unsigned-cancel-xdr"),
+  buildRegistryUnsignedDisputeTx: vi.fn(async () => "mock-unsigned-dispute-xdr"),
+  buildRegistryUnsignedResolveTx: vi.fn(async () => "mock-unsigned-resolve-xdr"),
+  submitSignedXDR: vi.fn(async () => ({ txHash: "mock-submitted-tx-hash", status: "SUCCESS" })),
   readOnChainOrder: vi.fn(async () => ({
     buyer: buyerKeypair.publicKey(),
     seller: sellerKeypair.publicKey(),
-    attestor: attestorKeypair.publicKey(),
+    attestors: [attestorKeypair.publicKey()],
+    threshold: 1,
+    confirmations: [],
     token: "mock-token-id",
     amount: 10000000n,
     deadline: 9999999999n,
@@ -26,6 +44,13 @@ vi.mock("../src/contractOps.js", () => ({
 
 import {
   attestOrder,
+  buildUnsignedAttest,
+  buildUnsignedCancel,
+  buildUnsignedClaim,
+  buildUnsignedCreateOrder,
+  buildUnsignedDispute,
+  buildUnsignedReclaim,
+  buildUnsignedResolve,
   claimOrder,
   createOrder,
   disputeOrder,
@@ -34,6 +59,7 @@ import {
   getOrderWithChainState,
   reclaimOrder,
   resolveDispute,
+  submitSignedTx,
 } from "../src/orderService.js";
 import { HttpError } from "../src/httpError.js";
 
@@ -236,5 +262,81 @@ describe("Order Service Unit & Integration (orderService.ts)", () => {
     const resolvedBuyer = await resolveDispute(created2.id, false);
     expect(resolvedBuyer.status).toBe("Reclaimed");
     expect(resolvedBuyer.resolve_tx_hash).toBe("mock-resolve-tx-hash");
+  });
+
+  describe("Unsigned Transaction Builders & Client-Side Wallet Signing Flow", () => {
+    it("builds unsigned create order and submits signed XDR", async () => {
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+      const { unsignedTxXdr, order } = await buildUnsignedCreateOrder({
+        sellerAddress: sellerKeypair.publicKey(),
+        buyerAddress: buyerKeypair.publicKey(),
+        attestorAddress: attestorKeypair.publicKey(),
+        amountStroops: 10000000n,
+        deadlineSeconds: deadline,
+      });
+
+      expect(unsignedTxXdr).toBe("mock-unsigned-create-xdr");
+      expect(order.id).toBeDefined();
+      expect(order.status).toBe("Created");
+
+      const submitRes = await submitSignedTx("signed-create-xdr-blob", order.id, "create");
+      expect(submitRes.txHash).toBe("mock-submitted-tx-hash");
+      expect(submitRes.status).toBe("SUCCESS");
+    });
+
+    it("builds unsigned attest, claim, reclaim, cancel, dispute, and resolve transactions", async () => {
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+      const created = await createOrder({
+        sellerAddress: sellerKeypair.publicKey(),
+        attestorAddress: attestorKeypair.publicKey(),
+        amountStroops: 10000000n,
+        deadlineSeconds: deadline,
+      });
+
+      // 1. Unsigned attest
+      const unsignedAttest = await buildUnsignedAttest(created.id, attestorKeypair.publicKey());
+      expect(unsignedAttest.unsignedTxXdr).toBe("mock-unsigned-attest-xdr");
+      expect(unsignedAttest.action).toBe("attest");
+
+      // 2. Unsigned cancel on created order
+      const unsignedCancel = await buildUnsignedCancel(created.id, buyerKeypair.publicKey());
+      expect(unsignedCancel.unsignedTxXdr).toBe("mock-unsigned-cancel-xdr");
+      expect(unsignedCancel.action).toBe("cancel");
+
+      // 3. Unsigned reclaim (requires deadline to be passed)
+      const { db } = await import("../src/db.js");
+      db.prepare("UPDATE orders SET deadline = ? WHERE id = ?").run(
+        Math.floor(Date.now() / 1000) - 100,
+        created.id,
+      );
+      const unsignedReclaim = await buildUnsignedReclaim(created.id);
+      expect(unsignedReclaim.unsignedTxXdr).toBe("mock-unsigned-reclaim-xdr");
+      expect(unsignedReclaim.action).toBe("reclaim");
+
+      // Restore deadline and attest order to test claim and dispute
+      db.prepare("UPDATE orders SET deadline = ? WHERE id = ?").run(
+        Math.floor(Date.now() / 1000) + 3600,
+        created.id,
+      );
+      await attestOrder(created.id);
+
+      // 4. Unsigned claim
+      const unsignedClaim = await buildUnsignedClaim(created.id);
+      expect(unsignedClaim.unsignedTxXdr).toBe("mock-unsigned-claim-xdr");
+      expect(unsignedClaim.action).toBe("claim");
+
+      // 5. Unsigned dispute
+      const unsignedDispute = await buildUnsignedDispute(created.id, buyerKeypair.publicKey());
+      expect(unsignedDispute.unsignedTxXdr).toBe("mock-unsigned-dispute-xdr");
+      expect(unsignedDispute.action).toBe("dispute");
+
+      // Transition to disputed
+      await disputeOrder(created.id);
+
+      // 6. Unsigned resolve
+      const unsignedResolve = await buildUnsignedResolve(created.id, true);
+      expect(unsignedResolve.unsignedTxXdr).toBe("mock-unsigned-resolve-xdr");
+      expect(unsignedResolve.action).toBe("resolve");
+    });
   });
 });

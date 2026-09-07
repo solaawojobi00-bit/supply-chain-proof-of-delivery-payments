@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { Keypair } from "@stellar/stellar-sdk";
-import { createOrderSchema, formatZodError } from "../src/schemas.js";
+import {
+  buildTxSchema,
+  createOrderSchema,
+  formatZodError,
+  submitSignedTxSchema,
+} from "../src/schemas.js";
 
 describe("Schema Validation (schemas.ts)", () => {
   const sellerKeypair = Keypair.random();
@@ -187,5 +192,29 @@ describe("Schema Validation (schemas.ts)", () => {
       expect(formatted).toContain("arbiterAddress");
       expect(formatted).toContain("valid Stellar public key");
     }
+  });
+
+  it("validates submitSignedTxSchema and buildTxSchema correctly", () => {
+    const validSubmit = submitSignedTxSchema.safeParse({
+      signedXdr: "AAAAAgAAAAA...",
+      orderId: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+      action: "attest",
+    });
+    expect(validSubmit.success).toBe(true);
+
+    const emptySubmit = submitSignedTxSchema.safeParse({
+      signedXdr: "",
+    });
+    expect(emptySubmit.success).toBe(false);
+
+    const validBuild = buildTxSchema.safeParse({
+      action: "claim",
+    });
+    expect(validBuild.success).toBe(true);
+
+    const invalidBuild = buildTxSchema.safeParse({
+      action: "invalid-action",
+    });
+    expect(invalidBuild.success).toBe(false);
   });
 });
