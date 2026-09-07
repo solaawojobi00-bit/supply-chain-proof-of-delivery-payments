@@ -1,5 +1,6 @@
 import { Keypair } from "@stellar/stellar-sdk";
 
+process.env.DB_PATH = ":memory:";
 process.env.STELLAR_RPC_URL = process.env.STELLAR_RPC_URL || "https://soroban-testnet.stellar.org";
 process.env.STELLAR_NETWORK_PASSPHRASE = process.env.STELLAR_NETWORK_PASSPHRASE || "Test SDF Network ; September 2015";
 process.env.ESCROW_WASM_HASH = process.env.ESCROW_WASM_HASH || "0000000000000000000000000000000000000000000000000000000000000000";
