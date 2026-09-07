@@ -521,6 +521,11 @@ components:
           type: string
           description: Optional Stellar contract address (C...) of the payment token; defaults to configured native XLM asset if omitted
           example: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+        webhookUrl:
+          type: string
+          format: uri
+          description: Optional HTTP/HTTPS webhook URL to receive real-time notifications on order state transitions
+          example: "https://api.merchant.com/webhooks/escrow"
 
     AttestOrderRequest:
       type: object
@@ -686,6 +691,12 @@ components:
           example: "in-transit"
         tokens:
           $ref: "#/components/schemas/OrderTokens"
+        webhookUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: Webhook URL configured to receive transition notifications
+          example: "https://api.merchant.com/webhooks/escrow"
         txHashes:
           $ref: "#/components/schemas/OrderTxHashes"
         createdAt:

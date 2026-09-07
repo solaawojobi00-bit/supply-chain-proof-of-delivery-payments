@@ -172,6 +172,7 @@ backend's job is:
 5. Poll the contract's `get_order()` (or read from its own DB, kept in sync
    from submitted tx results) to answer status queries.
 6. Expose everything over a small REST API (Express).
+7. Dispatch real-time HTTP webhook notifications on state transitions (`Created`, `Attested`, `Claimed`, `Reclaimed`, `Cancelled`, `Disputed`, `Resolved`) with automatic exponential backoff retries and non-blocking failure guarantees.
 
 Signing keys & Authentication: the backend supports both server-held demo keys and client-side wallet signing, combined with lightweight **role-based API authentication**:
 
@@ -179,6 +180,7 @@ Signing keys & Authentication: the backend supports both server-held demo keys a
   - **Order-Scoped Tokens**: Unique tokens for `buyer`, `seller`, `attestor`, and `arbiter` issued upon order creation (`POST /orders`).
   - **Environment Role Keys**: Static fallback tokens configured via `.env` (`BUYER_API_KEY`, `SELLER_API_KEY`, `ATTESTOR_API_KEY`, `ARBITER_API_KEY`, `ADMIN_API_KEY`).
   - **Enforcement**: Role mismatch results in `403 Forbidden`; missing/invalid credentials result in `401 Unauthorized`.
+- **Webhook Dispatcher (`backend/src/webhook.ts`)**: When an order has a configured `webhookUrl`, state transitions invoke `dispatchWebhook(order, event, txHash)`. Webhook failures are retried up to 3 times with exponential backoff and never fail or block the underlying transaction.
 - **Server-Held Keys**: Configured in `.env` (`BUYER_SECRET_KEY`, `SELLER_SECRET_KEY`, `ATTESTOR_SECRET_KEY`, `ARBITER_SECRET_KEY`) for seamless CLI demo execution.
 - **Client-Side Signing**: When invoked with `?unsigned=true` (or via `POST /orders/:id/build-tx`), the backend builds and simulates an unsigned transaction XDR envelope using the caller's public key. The client signs with Freighter or an SEP-43 wallet and submits the signed XDR to `POST /tx/submit` or `POST /orders/:id/submit`.
 

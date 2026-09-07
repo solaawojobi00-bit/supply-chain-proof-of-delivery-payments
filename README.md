@@ -199,13 +199,53 @@ Mutating endpoints require authentication corresponding to the authorized party'
    - `POST /orders/:id/build-tx`: Requires role credential matching requested `action`.
    - *Mismatched credentials receive `403 Forbidden`; missing credentials receive `401 Unauthorized`.*
 
+## Webhook Notifications
+
+When creating an order via `POST /orders`, callers can provide an optional `webhookUrl`. The backend will issue real-time HTTP `POST` notifications to this endpoint upon every successful state transition.
+
+### Event Types
+- `order.created`: Initial escrow order creation and contract deployment/funding.
+- `order.attested`: M-of-N attestation threshold met; order ready for claim.
+- `order.claimed`: Seller successfully withdrawn funds from escrow.
+- `order.reclaimed`: Buyer reclaimed funds after expiration.
+- `order.cancelled`: Mutual cancellation executed; buyer refunded.
+- `order.disputed`: Attestation disputed by buyer; funds frozen.
+- `order.resolved`: Arbiter resolved the dispute (releasing to seller or refunding buyer).
+
+### Payload Schema
+```json
+{
+  "event": "order.attested",
+  "orderId": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "contractId": "CA3D5KRYMCMUZGAPOETEZ2NZNOME4H664X4UIRGFW6UR47X7U6GFF6MS",
+  "numericId": 1725710000123,
+  "buyerAddress": "GB6NVEN5HSUBKMYCE5ZOWSK5RPO5RDTBWTJHQ35YKVGFFL3U2NOSVNQI",
+  "sellerAddress": "GC5H3W256B3QW4A44GAK36XN763K2KRN7O2OESN553TUXW7R6AKN4V6E",
+  "attestorAddress": "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI",
+  "attestors": ["GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"],
+  "threshold": 1,
+  "confirmations": ["GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"],
+  "arbiterAddress": "GB6NVEN5HSUBKMYCE5ZOWSK5RPO5RDTBWTJHQ35YKVGFFL3U2NOSVNQI",
+  "amountStroops": "10000000",
+  "deadline": 1735689600,
+  "status": "Attested",
+  "lifecycle": "delivered/confirmed",
+  "txHash": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+  "timestamp": "2026-09-08T00:00:00.000Z"
+}
+```
+
+### Delivery Guarantees & Retries
+- **Non-blocking**: Webhook delivery failures never fail or roll back the underlying on-chain state transition.
+- **Automatic Retries**: Failed deliveries (network errors, timeouts, or 4xx/5xx responses) are retried up to 3 times with exponential backoff and logged for auditing.
+
 ## API
 
 A complete machine-readable OpenAPI 3.0 specification is available at [`backend/openapi.yaml`](backend/openapi.yaml).
 
 | Endpoint                    | Required Role           | Effect                                                                                                                                                                                                         |
 | --------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /orders`              | Public / Buyer          | Create an order: `{ buyerAddress?, sellerAddress, attestorAddress?, attestors?: string[], threshold?: number, arbiterAddress?, amountStroops, deadlineSeconds, tokenContractId? }` (supports `?unsigned=true`) |
+| `POST /orders`              | Public / Buyer          | Create an order: `{ buyerAddress?, sellerAddress, attestorAddress?, attestors?: string[], threshold?: number, arbiterAddress?, amountStroops, deadlineSeconds, tokenContractId?, webhookUrl? }` (supports `?unsigned=true`) |
 | `GET /orders`               | Public                  | List all orders                                                                                                                                                                                                |
 | `GET /orders/:id`           | Public                  | Order status, including a live on-chain read                                                                                                                                                                   |
 | `POST /orders/:id/attest`   | `attestor`              | Authorized attestor confirms delivery (optional body: `{ attestorAddress }`; supports `?unsigned=true`)                                                                                                        |

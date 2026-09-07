@@ -1111,4 +1111,84 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       expect(claimSeller.status).toBe(200);
     });
   });
+
+  describe("Full Lifecycle 7: Webhook Notifications on State Changes (Issue #13)", () => {
+    it("receives real-time webhook notifications across Create -> Attest -> Claim lifecycle", async () => {
+      const receivedEvents: Array<{ event: string; payload: any }> = [];
+
+      // Spin up a mock webhook receiver
+      const webhookApp = (await import("express")).default();
+      webhookApp.use((await import("express")).default.json());
+      webhookApp.post("/webhook-sink", (req, res) => {
+        receivedEvents.push({
+          event: req.header("x-escrow-event") || req.body.event,
+          payload: req.body,
+        });
+        res.status(200).json({ received: true });
+      });
+
+      const webhookServer = webhookApp.listen(0);
+      const addr = webhookServer.address();
+      const webhookPort = typeof addr === "object" && addr !== null ? addr.port : 0;
+      const webhookUrl = `http://127.0.0.1:${webhookPort}/webhook-sink`;
+
+      try {
+        const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+        // 1. Create order with webhookUrl
+        const createRes = await fetch(`${baseUrl}/orders`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sellerAddress: sellerKeypair.publicKey(),
+            attestorAddress: attestorKeypair.publicKey(),
+            amountStroops: "25000000",
+            deadlineSeconds: String(deadline),
+            webhookUrl,
+          }),
+        });
+        expect(createRes.status).toBe(201);
+        const order = (await createRes.json()) as any;
+        expect(order.webhookUrl).toBe(webhookUrl);
+
+        // 2. Attest order
+        const attestRes = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${order.tokens.attestor}` },
+        });
+        expect(attestRes.status).toBe(200);
+
+        // 3. Claim order
+        const claimRes = await fetch(`${baseUrl}/orders/${order.id}/claim`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${order.tokens.seller}` },
+        });
+        expect(claimRes.status).toBe(200);
+
+        // Verify captured webhook events
+        expect(receivedEvents.length).toBeGreaterThanOrEqual(3);
+        const eventNames = receivedEvents.map((e) => e.event);
+        expect(eventNames).toContain("order.created");
+        expect(eventNames).toContain("order.attested");
+        expect(eventNames).toContain("order.claimed");
+
+        const createdEvt = receivedEvents.find((e) => e.event === "order.created");
+        expect(createdEvt?.payload.orderId).toBe(order.id);
+        expect(createdEvt?.payload.status).toBe("Created");
+        expect(createdEvt?.payload.lifecycle).toBe("in-transit");
+
+        const attestedEvt = receivedEvents.find((e) => e.event === "order.attested");
+        expect(attestedEvt?.payload.orderId).toBe(order.id);
+        expect(attestedEvt?.payload.status).toBe("Attested");
+        expect(attestedEvt?.payload.lifecycle).toBe("delivered/confirmed");
+
+        const claimedEvt = receivedEvents.find((e) => e.event === "order.claimed");
+        expect(claimedEvt?.payload.orderId).toBe(order.id);
+        expect(claimedEvt?.payload.status).toBe("Claimed");
+        expect(claimedEvt?.payload.lifecycle).toBe("claimed");
+      } finally {
+        webhookServer.close();
+      }
+    });
+  });
 });
