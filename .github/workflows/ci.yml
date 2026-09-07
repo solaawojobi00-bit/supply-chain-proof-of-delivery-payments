@@ -53,3 +53,22 @@ jobs:
 
       - name: Run unit and integration tests with coverage
         run: npm test --prefix backend
+
+  audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
+      - name: Run dependency audit gate
+        run: node scripts/audit-deps.mjs
+
