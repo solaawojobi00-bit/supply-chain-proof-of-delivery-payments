@@ -169,4 +169,78 @@ describe("API Routes (routes.ts)", () => {
     expect(claimedOrder.status).toBe("Claimed");
     expect(claimedOrder.lifecycle).toBe("claimed");
   });
+
+  it("POST /orders with Idempotency-Key returns 201 on first request and 200 on identical repeat request", async () => {
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
+    const idempotencyKey = "idemp-key-test-1";
+    const body = {
+      sellerAddress: sellerKeypair.publicKey(),
+      attestorAddress: attestorKeypair.publicKey(),
+      amountStroops: "10000000",
+      deadlineSeconds: deadline.toString(),
+    };
+
+    const firstRes = await fetch(`${baseUrl}/orders`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify(body),
+    });
+    expect(firstRes.status).toBe(201);
+    const firstOrder = (await firstRes.json()) as any;
+    expect(firstOrder.id).toBeDefined();
+
+    // Repeat with identical key and body
+    const secondRes = await fetch(`${baseUrl}/orders`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify(body),
+    });
+    expect(secondRes.status).toBe(200);
+    const secondOrder = (await secondRes.json()) as any;
+    expect(secondOrder.id).toBe(firstOrder.id);
+    expect(secondOrder.contractId).toBe(firstOrder.contractId);
+  });
+
+  it("POST /orders with same Idempotency-Key but different body returns 409 Conflict", async () => {
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
+    const idempotencyKey = "idemp-key-test-conflict";
+    const originalBody = {
+      sellerAddress: sellerKeypair.publicKey(),
+      attestorAddress: attestorKeypair.publicKey(),
+      amountStroops: "10000000",
+      deadlineSeconds: deadline.toString(),
+    };
+
+    const firstRes = await fetch(`${baseUrl}/orders`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify(originalBody),
+    });
+    expect(firstRes.status).toBe(201);
+
+    // Repeat with same key but different amount
+    const conflictRes = await fetch(`${baseUrl}/orders`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify({
+        ...originalBody,
+        amountStroops: "99999999",
+      }),
+    });
+    expect(conflictRes.status).toBe(409);
+    const errorBody = (await conflictRes.json()) as { error: string };
+    expect(errorBody.error).toContain("Idempotency key");
+  });
 });

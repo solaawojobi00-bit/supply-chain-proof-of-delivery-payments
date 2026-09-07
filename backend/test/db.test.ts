@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { getOrder, insertOrder, listOrders, updateOrderStatus, type OrderRow } from "../src/db.js";
+import {
+  getOrder,
+  getOrderByIdempotencyKey,
+  insertOrder,
+  listOrders,
+  updateOrderStatus,
+  type OrderRow,
+} from "../src/db.js";
 
 describe("Database Operations (db.ts)", () => {
   it("inserts and retrieves an order by id", () => {
@@ -67,5 +74,36 @@ describe("Database Operations (db.ts)", () => {
     const claimed = getOrder("test-order-1");
     expect(claimed?.status).toBe("Claimed");
     expect(claimed?.claim_tx_hash).toBe("tx-claim-1");
+  });
+
+  it("stores and retrieves order by idempotency_key", () => {
+    const rowIdemp: OrderRow = {
+      id: "test-order-idemp",
+      contract_id: "contract-idemp",
+      buyer_address: "GBUYER123",
+      seller_address: "GSELLER123",
+      attestor_address: "GATTESTOR123",
+      token_contract_id: "GTOKEN123",
+      amount: "30000000",
+      deadline: Math.floor(Date.now() / 1000) + 7200,
+      status: "Created",
+      create_tx_hash: "tx-create-idemp",
+      attest_tx_hash: null,
+      claim_tx_hash: null,
+      reclaim_tx_hash: null,
+      idempotency_key: "my-idempotency-key-123",
+      request_payload: JSON.stringify({ amount: "30000000" }),
+      created_at: new Date().toISOString(),
+    };
+
+    insertOrder(rowIdemp);
+    const retrieved = getOrderByIdempotencyKey("my-idempotency-key-123");
+    expect(retrieved).toBeDefined();
+    expect(retrieved?.id).toBe("test-order-idemp");
+    expect(retrieved?.idempotency_key).toBe("my-idempotency-key-123");
+    expect(retrieved?.request_payload).toBe(JSON.stringify({ amount: "30000000" }));
+
+    const nonexistent = getOrderByIdempotencyKey("non-existent-key");
+    expect(nonexistent).toBeUndefined();
   });
 });

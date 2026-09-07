@@ -9,7 +9,7 @@ import {
   lifecycleLabel,
   reclaimOrder,
 } from "./orderService.js";
-import type { OrderRow } from "./db.js";
+import { getOrderByIdempotencyKey, type OrderRow } from "./db.js";
 import { createOrderSchema, formatZodError } from "./schemas.js";
 
 export const router = Router();
@@ -49,17 +49,46 @@ function asyncHandler(fn: (req: Request, res: Response) => Promise<void>) {
 router.post(
   "/orders",
   asyncHandler(async (req, res) => {
+    const rawIdempotencyKey = req.header("idempotency-key") || req.header("x-idempotency-key");
+    const idempotencyKey =
+      typeof rawIdempotencyKey === "string" ? rawIdempotencyKey.trim() : undefined;
+
     const parseResult = createOrderSchema.safeParse(req.body);
     if (!parseResult.success) {
       throw new HttpError(400, formatZodError(parseResult.error));
     }
     const { sellerAddress, attestorAddress, amountStroops, deadlineSeconds } = parseResult.data;
-    const order = await createOrder({
+    const normalizedPayload = JSON.stringify({
       sellerAddress,
       attestorAddress,
-      amountStroops: BigInt(amountStroops),
-      deadlineSeconds: BigInt(deadlineSeconds),
+      amountStroops,
+      deadlineSeconds,
     });
+
+    if (idempotencyKey) {
+      const existing = getOrderByIdempotencyKey(idempotencyKey);
+      if (existing) {
+        if (existing.request_payload && existing.request_payload !== normalizedPayload) {
+          throw new HttpError(
+            409,
+            "Idempotency key was previously used with a different request body",
+          );
+        }
+        res.status(200).json(serialize(existing));
+        return;
+      }
+    }
+
+    const order = await createOrder(
+      {
+        sellerAddress,
+        attestorAddress,
+        amountStroops: BigInt(amountStroops),
+        deadlineSeconds: BigInt(deadlineSeconds),
+      },
+      idempotencyKey,
+      normalizedPayload,
+    );
     res.status(201).json(serialize(order));
   }),
 );
