@@ -77,6 +77,12 @@ export const createOrderSchema = z
         message: "tokenContractId must be a valid Stellar contract address (C...)",
       })
       .optional(),
+    arbiterAddress: z
+      .string()
+      .refine(isValidStellarAddress, {
+        message: "arbiterAddress must be a valid Stellar public key (G...)",
+      })
+      .optional(),
   })
   .refine(
     (data) => Boolean(data.attestors && data.attestors.length > 0) || Boolean(data.attestorAddress),
@@ -108,8 +114,15 @@ export const attestOrderSchema = z.object({
     .optional(),
 });
 
+export const resolveDisputeSchema = z.object({
+  releaseToSeller: z.boolean({
+    message: "releaseToSeller is required and must be a boolean",
+  }),
+});
+
 export type CreateOrderBody = z.infer<typeof createOrderSchema>;
 export type AttestOrderBody = z.infer<typeof attestOrderSchema>;
+export type ResolveDisputeBody = z.infer<typeof resolveDisputeSchema>;
 
 export function formatZodError(error: z.ZodError): string {
   const issues = error.issues || (error as unknown as { errors?: z.ZodIssue[] }).errors || [];

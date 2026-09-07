@@ -15,6 +15,7 @@ interface RawOrder {
   attestors: string[];
   threshold: number;
   confirmations: string[];
+  arbiter: string;
   token: string;
   amount: bigint;
   deadline: bigint;
@@ -40,6 +41,7 @@ interface EscrowContract {
     seller: string;
     attestors: string[];
     threshold: number;
+    arbiter: string;
     token: string;
     amount: bigint;
     deadline: bigint;
@@ -48,6 +50,10 @@ interface EscrowContract {
   claim(): Promise<AssembledTransaction<ContractResult<null>>>;
   reclaim(): Promise<AssembledTransaction<ContractResult<null>>>;
   cancel(): Promise<AssembledTransaction<ContractResult<null>>>;
+  dispute(): Promise<AssembledTransaction<ContractResult<null>>>;
+  resolve_dispute(args: {
+    release_to_seller: boolean;
+  }): Promise<AssembledTransaction<ContractResult<null>>>;
   get_order(): Promise<AssembledTransaction<ContractResult<RawOrder>>>;
 }
 
@@ -124,6 +130,7 @@ export async function callCreate(
     seller: string;
     attestors: string[];
     threshold?: number;
+    arbiter?: string;
     token?: string;
     amount: bigint;
     deadline: bigint;
@@ -137,6 +144,7 @@ export async function callCreate(
       seller: params.seller,
       attestors: params.attestors,
       threshold: params.threshold ?? 1,
+      arbiter: params.arbiter ?? deployerKeypair.publicKey(),
       token: params.token ?? config.paymentTokenContractId,
       amount: params.amount,
       deadline: params.deadline,
@@ -304,6 +312,73 @@ export async function callCancel(
   }
 }
 
+export async function callDispute(contractId: string, buyer: Keypair): Promise<string | undefined> {
+  const start = Date.now();
+  try {
+    const client = await clientFor(contractId, buyer);
+    const tx = await client.dispute();
+    const sent = await tx.signAndSend();
+    unwrap(sent.result);
+    const txHash = sent.sendTransactionResponse?.hash;
+    const duration = Date.now() - start;
+    logStructured({
+      type: "contract_call",
+      contractId,
+      method: "dispute",
+      txHash,
+      duration,
+    });
+    return txHash;
+  } catch (err) {
+    const duration = Date.now() - start;
+    logStructured({
+      level: "error",
+      type: "contract_call",
+      contractId,
+      method: "dispute",
+      error: err instanceof Error ? err.message : String(err),
+      duration,
+    });
+    throw err;
+  }
+}
+
+export async function callResolveDispute(
+  contractId: string,
+  arbiter: Keypair,
+  releaseToSeller: boolean,
+): Promise<string | undefined> {
+  const start = Date.now();
+  try {
+    const client = await clientFor(contractId, arbiter);
+    const tx = await client.resolve_dispute({ release_to_seller: releaseToSeller });
+    const sent = await tx.signAndSend();
+    unwrap(sent.result);
+    const txHash = sent.sendTransactionResponse?.hash;
+    const duration = Date.now() - start;
+    logStructured({
+      type: "contract_call",
+      contractId,
+      method: "resolve_dispute",
+      releaseToSeller,
+      txHash,
+      duration,
+    });
+    return txHash;
+  } catch (err) {
+    const duration = Date.now() - start;
+    logStructured({
+      level: "error",
+      type: "contract_call",
+      contractId,
+      method: "resolve_dispute",
+      error: err instanceof Error ? err.message : String(err),
+      duration,
+    });
+    throw err;
+  }
+}
+
 export interface EscrowRegistryContract {
   create_order(args: {
     order_id: bigint;
@@ -311,6 +386,7 @@ export interface EscrowRegistryContract {
     seller: string;
     attestors: string[];
     threshold: number;
+    arbiter: string;
     token: string;
     amount: bigint;
     deadline: bigint;
@@ -322,6 +398,11 @@ export interface EscrowRegistryContract {
   claim(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
   reclaim(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
   cancel(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
+  dispute(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
+  resolve_dispute(args: {
+    order_id: bigint;
+    release_to_seller: boolean;
+  }): Promise<AssembledTransaction<ContractResult<null>>>;
   get_order(args: {
     order_id: bigint;
   }): Promise<AssembledTransaction<ContractResult<RawOrder & { order_id: bigint }>>>;
@@ -333,6 +414,7 @@ export interface OnChainOrder {
   attestors: string[];
   threshold: number;
   confirmations: string[];
+  arbiter: string;
   token: string;
   amount: bigint;
   deadline: bigint;
@@ -367,6 +449,7 @@ export async function callRegistryCreateOrder(
     seller: string;
     attestors: string[];
     threshold?: number;
+    arbiter?: string;
     token?: string;
     amount: bigint;
     deadline: bigint;
@@ -381,6 +464,7 @@ export async function callRegistryCreateOrder(
       seller: params.seller,
       attestors: params.attestors,
       threshold: params.threshold ?? 1,
+      arbiter: params.arbiter ?? deployerKeypair.publicKey(),
       token: params.token ?? config.paymentTokenContractId,
       amount: params.amount,
       deadline: params.deadline,
@@ -560,6 +644,85 @@ export async function callRegistryCancel(
       type: "contract_call",
       contractId,
       method: "registry_cancel",
+      orderId: orderId.toString(),
+      error: err instanceof Error ? err.message : String(err),
+      duration,
+    });
+    throw err;
+  }
+}
+
+export async function callRegistryDispute(
+  contractId: string,
+  buyer: Keypair,
+  orderId: bigint,
+): Promise<string | undefined> {
+  const start = Date.now();
+  try {
+    const client = await registryClientFor(contractId, buyer);
+    const tx = await client.dispute({ order_id: orderId });
+    const sent = await tx.signAndSend();
+    unwrap(sent.result);
+    const txHash = sent.sendTransactionResponse?.hash;
+    const duration = Date.now() - start;
+    logStructured({
+      type: "contract_call",
+      contractId,
+      method: "registry_dispute",
+      orderId: orderId.toString(),
+      txHash,
+      duration,
+    });
+    return txHash;
+  } catch (err) {
+    const duration = Date.now() - start;
+    logStructured({
+      level: "error",
+      type: "contract_call",
+      contractId,
+      method: "registry_dispute",
+      orderId: orderId.toString(),
+      error: err instanceof Error ? err.message : String(err),
+      duration,
+    });
+    throw err;
+  }
+}
+
+export async function callRegistryResolveDispute(
+  contractId: string,
+  arbiter: Keypair,
+  orderId: bigint,
+  releaseToSeller: boolean,
+): Promise<string | undefined> {
+  const start = Date.now();
+  try {
+    const client = await registryClientFor(contractId, arbiter);
+    const tx = await client.resolve_dispute({
+      order_id: orderId,
+      release_to_seller: releaseToSeller,
+    });
+    const sent = await tx.signAndSend();
+    unwrap(sent.result);
+    const txHash = sent.sendTransactionResponse?.hash;
+    const duration = Date.now() - start;
+    logStructured({
+      type: "contract_call",
+      contractId,
+      method: "registry_resolve_dispute",
+      orderId: orderId.toString(),
+      releaseToSeller,
+      txHash,
+      duration,
+    });
+    return txHash;
+  } catch (err) {
+    const duration = Date.now() - start;
+    logStructured({
+      level: "error",
+      type: "contract_call",
+      contractId,
+      method: "registry_resolve_dispute",
       orderId: orderId.toString(),
       error: err instanceof Error ? err.message : String(err),
       duration,

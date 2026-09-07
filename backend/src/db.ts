@@ -3,7 +3,8 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { config } from "./config.js";
 
-export type OrderStatus = "Created" | "Attested" | "Claimed" | "Reclaimed" | "Cancelled";
+export type OrderStatus =
+  "Created" | "Attested" | "Claimed" | "Reclaimed" | "Cancelled" | "Disputed";
 
 export interface OrderRow {
   id: string;
@@ -15,6 +16,7 @@ export interface OrderRow {
   attestors?: string | null;
   threshold?: number | null;
   confirmations?: string | null;
+  arbiter_address?: string | null;
   token_contract_id: string;
   amount: string;
   deadline: number;
@@ -24,6 +26,8 @@ export interface OrderRow {
   claim_tx_hash: string | null;
   reclaim_tx_hash: string | null;
   cancel_tx_hash?: string | null;
+  dispute_tx_hash?: string | null;
+  resolve_tx_hash?: string | null;
   idempotency_key?: string | null;
   request_payload?: string | null;
   created_at: string;
@@ -44,6 +48,7 @@ db.exec(`
     attestors TEXT,
     threshold INTEGER DEFAULT 1,
     confirmations TEXT DEFAULT '[]',
+    arbiter_address TEXT,
     token_contract_id TEXT NOT NULL,
     amount TEXT NOT NULL,
     deadline INTEGER NOT NULL,
@@ -53,6 +58,8 @@ db.exec(`
     claim_tx_hash TEXT,
     reclaim_tx_hash TEXT,
     cancel_tx_hash TEXT,
+    dispute_tx_hash TEXT,
+    resolve_tx_hash TEXT,
     idempotency_key TEXT UNIQUE,
     request_payload TEXT,
     created_at TEXT NOT NULL
@@ -101,19 +108,39 @@ try {
   // column already exists
 }
 
+try {
+  db.exec(`ALTER TABLE orders ADD COLUMN arbiter_address TEXT`);
+} catch {
+  // column already exists
+}
+
+try {
+  db.exec(`ALTER TABLE orders ADD COLUMN dispute_tx_hash TEXT`);
+} catch {
+  // column already exists
+}
+
+try {
+  db.exec(`ALTER TABLE orders ADD COLUMN resolve_tx_hash TEXT`);
+} catch {
+  // column already exists
+}
+
 export function insertOrder(row: OrderRow): void {
   db.prepare(
     `INSERT INTO orders (
       id, contract_id, numeric_id, buyer_address, seller_address, attestor_address,
-      attestors, threshold, confirmations,
+      attestors, threshold, confirmations, arbiter_address,
       token_contract_id, amount, deadline, status,
       create_tx_hash, attest_tx_hash, claim_tx_hash, reclaim_tx_hash, cancel_tx_hash,
+      dispute_tx_hash, resolve_tx_hash,
       idempotency_key, request_payload, created_at
     ) VALUES (
       @id, @contract_id, @numeric_id, @buyer_address, @seller_address, @attestor_address,
-      @attestors, @threshold, @confirmations,
+      @attestors, @threshold, @confirmations, @arbiter_address,
       @token_contract_id, @amount, @deadline, @status,
       @create_tx_hash, @attest_tx_hash, @claim_tx_hash, @reclaim_tx_hash, @cancel_tx_hash,
+      @dispute_tx_hash, @resolve_tx_hash,
       @idempotency_key, @request_payload, @created_at
     )`,
   ).run({
@@ -122,7 +149,10 @@ export function insertOrder(row: OrderRow): void {
     attestors: row.attestors ?? null,
     threshold: row.threshold ?? 1,
     confirmations: row.confirmations ?? "[]",
+    arbiter_address: row.arbiter_address ?? null,
     cancel_tx_hash: row.cancel_tx_hash ?? null,
+    dispute_tx_hash: row.dispute_tx_hash ?? null,
+    resolve_tx_hash: row.resolve_tx_hash ?? null,
     idempotency_key: row.idempotency_key ?? null,
     request_payload: row.request_payload ?? null,
   });
@@ -144,7 +174,13 @@ export function listOrders(): OrderRow[] {
 export function updateOrderStatus(
   id: string,
   status: OrderStatus,
-  txHashColumn: "attest_tx_hash" | "claim_tx_hash" | "reclaim_tx_hash" | "cancel_tx_hash",
+  txHashColumn:
+    | "attest_tx_hash"
+    | "claim_tx_hash"
+    | "reclaim_tx_hash"
+    | "cancel_tx_hash"
+    | "dispute_tx_hash"
+    | "resolve_tx_hash",
   txHash: string,
 ): void {
   db.prepare(`UPDATE orders SET status = ?, ${txHashColumn} = ? WHERE id = ?`).run(

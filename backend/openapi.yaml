@@ -284,6 +284,102 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /orders/{id}/dispute:
+    post:
+      summary: Raise dispute against an attested order
+      description: Buyer challenges an attestation before the seller claims funds, transitioning the order into Disputed state.
+      operationId: disputeOrder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: UUID of the order
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Order successfully transitioned to Disputed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "400":
+          description: Missing local keypair for buyer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Order is not in Attested state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Transaction execution failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /orders/{id}/resolve:
+    post:
+      summary: Resolve contested attestation dispute
+      description: Designated arbiter resolves a disputed order, deciding whether to release funds to the seller or refund the buyer.
+      operationId: resolveDispute
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: UUID of the order
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveDisputeRequest"
+      responses:
+        "200":
+          description: Dispute resolved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "400":
+          description: Invalid request body or missing local keypair for arbiter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Order is not in Disputed state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Transaction execution failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     CreateOrderRequest:
@@ -313,6 +409,10 @@ components:
           type: integer
           description: Minimum number of distinct attestations required (1 <= threshold <= len(attestors))
           example: 2
+        arbiterAddress:
+          type: string
+          description: Optional designated arbiter address (G...) for dispute resolution; defaults to deployer keypair
+          example: "GB6NVEN5HSUBKMYCE5ZOWSK5RPO5RDTBWTJHQ35YKVGFFL3U2NOSVNQI"
         amountStroops:
           type: string
           description: Amount in stroops (1 XLM = 10,000,000 stroops) as a string
@@ -333,6 +433,16 @@ components:
           type: string
           description: Specific Stellar public address (G...) of the attestor signing the confirmation
           example: "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"
+
+    ResolveDisputeRequest:
+      type: object
+      required:
+        - releaseToSeller
+      properties:
+        releaseToSeller:
+          type: boolean
+          description: True to release escrowed funds to seller (Claimed); False to refund buyer (Reclaimed)
+          example: true
 
     OrderTxHashes:
       type: object
@@ -367,6 +477,16 @@ components:
           type: string
           nullable: true
           description: Transaction hash of mutual cancellation
+          example: null
+        dispute:
+          type: string
+          nullable: true
+          description: Transaction hash of raising a dispute
+          example: null
+        resolve:
+          type: string
+          nullable: true
+          description: Transaction hash of dispute resolution
           example: null
 
     Order:
@@ -428,6 +548,11 @@ components:
           description: List of attestor addresses that have confirmed delivery
           example:
             - "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"
+        arbiterAddress:
+          type: string
+          nullable: true
+          description: Stellar public address (G...) of the designated arbiter
+          example: "GB6NVEN5HSUBKMYCE5ZOWSK5RPO5RDTBWTJHQ35YKVGFFL3U2NOSVNQI"
         tokenContractId:
           type: string
           description: Stellar contract address (C...) of the payment asset
@@ -445,6 +570,7 @@ components:
           enum:
             - Created
             - Attested
+            - Disputed
             - Claimed
             - Reclaimed
             - Cancelled
@@ -456,6 +582,7 @@ components:
             - in-transit
             - deadline-passed
             - delivered/confirmed
+            - disputed
             - claimed
             - reclaimed
             - cancelled
@@ -501,6 +628,10 @@ components:
             type: string
           description: List of confirmed attestor addresses recorded on-chain
           example: []
+        arbiter:
+          type: string
+          description: Arbiter address recorded on-chain
+          example: "GB6NVEN5HSUBKMYCE5ZOWSK5RPO5RDTBWTJHQ35YKVGFFL3U2NOSVNQI"
         amount:
           type: string
           description: Escrowed amount in stroops
@@ -514,6 +645,7 @@ components:
           enum:
             - Created
             - Attested
+            - Disputed
             - Claimed
             - Reclaimed
             - Cancelled

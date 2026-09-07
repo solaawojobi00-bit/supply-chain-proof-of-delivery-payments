@@ -55,4 +55,12 @@ describe("Order Lifecycle Mapping (orderService.ts)", () => {
     };
     expect(lifecycleLabel(reclaimedOrder)).toBe("reclaimed");
   });
+
+  it("returns 'disputed' when Disputed", () => {
+    const disputedOrder: OrderRow = {
+      ...baseOrder,
+      status: "Disputed",
+    };
+    expect(lifecycleLabel(disputedOrder)).toBe("disputed");
+  });
 });

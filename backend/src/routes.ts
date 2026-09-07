@@ -5,13 +5,20 @@ import {
   cancelOrder,
   claimOrder,
   createOrder,
+  disputeOrder,
   getAllOrders,
   getOrderWithChainState,
   lifecycleLabel,
   reclaimOrder,
+  resolveDispute,
 } from "./orderService.js";
 import { getOrderByIdempotencyKey, type OrderRow } from "./db.js";
-import { attestOrderSchema, createOrderSchema, formatZodError } from "./schemas.js";
+import {
+  attestOrderSchema,
+  createOrderSchema,
+  formatZodError,
+  resolveDisputeSchema,
+} from "./schemas.js";
 
 export const router = Router();
 
@@ -34,6 +41,7 @@ function serialize(order: OrderRow) {
     attestors,
     threshold: order.threshold ?? 1,
     confirmations,
+    arbiterAddress: order.arbiter_address ?? null,
     tokenContractId: order.token_contract_id,
     amountStroops: order.amount,
     deadline: order.deadline,
@@ -45,6 +53,8 @@ function serialize(order: OrderRow) {
       claim: order.claim_tx_hash,
       reclaim: order.reclaim_tx_hash,
       cancel: order.cancel_tx_hash ?? null,
+      dispute: order.dispute_tx_hash ?? null,
+      resolve: order.resolve_tx_hash ?? null,
     },
     createdAt: order.created_at,
   };
@@ -72,6 +82,7 @@ router.post(
       attestorAddress,
       attestors,
       threshold,
+      arbiterAddress,
       amountStroops,
       deadlineSeconds,
       tokenContractId,
@@ -81,6 +92,7 @@ router.post(
       attestorAddress,
       attestors,
       threshold,
+      arbiterAddress,
       amountStroops,
       deadlineSeconds,
       tokenContractId,
@@ -106,6 +118,7 @@ router.post(
         attestorAddress,
         attestors,
         threshold,
+        arbiterAddress,
         amountStroops: BigInt(amountStroops),
         deadlineSeconds: BigInt(deadlineSeconds),
         tokenContractId,
@@ -173,5 +186,25 @@ router.post(
   "/orders/:id/cancel",
   asyncHandler(async (req, res) => {
     res.json(serialize(await cancelOrder(String(req.params.id))));
+  }),
+);
+
+router.post(
+  "/orders/:id/dispute",
+  asyncHandler(async (req, res) => {
+    res.json(serialize(await disputeOrder(String(req.params.id))));
+  }),
+);
+
+router.post(
+  "/orders/:id/resolve",
+  asyncHandler(async (req, res) => {
+    const parseResult = resolveDisputeSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      throw new HttpError(400, formatZodError(parseResult.error));
+    }
+    res.json(
+      serialize(await resolveDispute(String(req.params.id), parseResult.data.releaseToSeller)),
+    );
   }),
 );

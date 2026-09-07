@@ -56,23 +56,26 @@ pub struct Order {
     pub attestors: Vec<Address>,
     pub threshold: u32,
     pub confirmations: Vec<Address>,
+    pub arbiter: Address,
     pub token: Address,      // Stellar Asset Contract address (XLM or custom SAC)
     pub amount: i128,
     pub deadline: u64,       // unix timestamp
-    pub status: OrderStatus, // Created | Attested | Claimed | Reclaimed | Cancelled
+    pub status: OrderStatus, // Created | Attested | Disputed | Claimed | Reclaimed | Cancelled
 }
 ```
 
 Methods:
 
-| Method                                                                 | Caller              | Precondition                                       | Effect                                                                                                                                       |
-| ---------------------------------------------------------------------- | ------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create(buyer, seller, attestors, threshold, token, amount, deadline)` | buyer               | none (init)                                        | `require_auth(buyer)`; pulls `amount` of `token` from buyer into the contract via the token's `transfer`; stores `Order`, `status = Created` |
-| `attest(attestor)`                                                     | authorized attestor | `status == Created`, `now < deadline`, unconfirmed | `require_auth(attestor)`; adds to `confirmations`; transitions `status = Attested` once `confirmations.len() >= threshold`                   |
-| `claim()`                                                              | seller              | `status == Attested`                               | `require_auth(seller)`; transfers `amount` of `token` to seller; `status = Claimed`                                                          |
-| `reclaim()`                                                            | buyer               | `status == Created`, `now >= deadline`             | `require_auth(buyer)`; transfers `amount` of `token` back to buyer; `status = Reclaimed`                                                     |
-| `cancel()`                                                             | buyer & seller      | `status == Created`                                | `require_auth(buyer)` & `require_auth(seller)`; transfers `amount` of `token` back to buyer; `status = Cancelled`                            |
-| `get_order()`                                                          | anyone              | —                                                  | read-only state view                                                                                                                         |
+| Method                                                                          | Caller              | Precondition                                       | Effect                                                                                                                                       |
+| ------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create(buyer, seller, attestors, threshold, arbiter, token, amount, deadline)` | buyer               | none (init)                                        | `require_auth(buyer)`; pulls `amount` of `token` from buyer into the contract via the token's `transfer`; stores `Order`, `status = Created` |
+| `attest(attestor)`                                                              | authorized attestor | `status == Created`, `now < deadline`, unconfirmed | `require_auth(attestor)`; adds to `confirmations`; transitions `status = Attested` once `confirmations.len() >= threshold`                   |
+| `claim()`                                                                       | seller              | `status == Attested`                               | `require_auth(seller)`; transfers `amount` of `token` to seller; `status = Claimed`                                                          |
+| `reclaim()`                                                                     | buyer               | `status == Created`, `now >= deadline`             | `require_auth(buyer)`; transfers `amount` of `token` back to buyer; `status = Reclaimed`                                                     |
+| `cancel()`                                                                      | buyer & seller      | `status == Created`                                | `require_auth(buyer)` & `require_auth(seller)`; transfers `amount` of `token` back to buyer; `status = Cancelled`                            |
+| `dispute()`                                                                     | buyer               | `status == Attested`                               | `require_auth(buyer)`; freezes claim and transitions `status = Disputed`                                                                     |
+| `resolve_dispute(release_to_seller)`                                            | arbiter             | `status == Disputed`                               | `require_auth(arbiter)`; transfers funds to seller (`Claimed`) or buyer (`Reclaimed`) based on `release_to_seller`                           |
+| `get_order()`                                                                   | anyone              | —                                                  | read-only state view                                                                                                                         |
 
 ### 2. Shared Escrow Registry (`contracts/escrow-registry`)
 
@@ -86,6 +89,7 @@ pub struct Order {
     pub attestors: Vec<Address>,
     pub threshold: u32,
     pub confirmations: Vec<Address>,
+    pub arbiter: Address,
     pub token: Address,
     pub amount: i128,
     pub deadline: u64,
@@ -95,14 +99,16 @@ pub struct Order {
 
 Methods:
 
-| Method                                                                                 | Caller              | Precondition                                       | Effect                                                                                                                    |
-| -------------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `create_order(order_id, buyer, seller, attestors, threshold, token, amount, deadline)` | buyer               | `order_id` not exists                              | `require_auth(buyer)`; transfers `amount` into registry contract; stores `DataKey::Order(order_id)` with status `Created` |
-| `attest(order_id, attestor)`                                                           | authorized attestor | `status == Created`, `now < deadline`, unconfirmed | `require_auth(attestor)`; adds to `confirmations`; updates order status to `Attested` once threshold is met               |
-| `claim(order_id)`                                                                      | seller              | `status == Attested`                               | `require_auth(seller)`; transfers funds to seller; updates status to `Claimed`                                            |
-| `reclaim(order_id)`                                                                    | buyer               | `status == Created`, `now >= deadline`             | `require_auth(buyer)`; refunds funds to buyer; updates status to `Reclaimed`                                              |
-| `cancel(order_id)`                                                                     | buyer & seller      | `status == Created`                                | `require_auth(buyer)` & `require_auth(seller)`; refunds funds to buyer; updates status to `Cancelled`                     |
-| `get_order(order_id)`                                                                  | anyone              | `order_id` exists                                  | Returns `Order` state                                                                                                     |
+| Method                                                                                          | Caller              | Precondition                                       | Effect                                                                                                                                           |
+| ----------------------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `create_order(order_id, buyer, seller, attestors, threshold, arbiter, token, amount, deadline)` | buyer               | `order_id` not exists                              | `require_auth(buyer)`; transfers `amount` into registry contract; stores `DataKey::Order(order_id)` with status `Created`                        |
+| `attest(order_id, attestor)`                                                                    | authorized attestor | `status == Created`, `now < deadline`, unconfirmed | `require_auth(attestor)`; adds to `confirmations`; updates order status to `Attested` once threshold is met                                      |
+| `claim(order_id)`                                                                               | seller              | `status == Attested`                               | `require_auth(seller)`; transfers funds to seller; updates status to `Claimed`                                                                   |
+| `reclaim(order_id)`                                                                             | buyer               | `status == Created`, `now >= deadline`             | `require_auth(buyer)`; refunds funds to buyer; updates status to `Reclaimed`                                                                     |
+| `cancel(order_id)`                                                                              | buyer & seller      | `status == Created`                                | `require_auth(buyer)` & `require_auth(seller)`; refunds funds to buyer; updates status to `Cancelled`                                            |
+| `dispute(order_id)`                                                                             | buyer               | `status == Attested`                               | `require_auth(buyer)`; freezes claim and updates status to `Disputed`                                                                            |
+| `resolve_dispute(order_id, release_to_seller)`                                                  | arbiter             | `status == Disputed`                               | `require_auth(arbiter)`; transfers funds to seller (`Claimed`) or buyer (`Reclaimed`) based on `release_to_seller`; updates status appropriately |
+| `get_order(order_id)`                                                                           | anyone              | `order_id` exists                                  | Returns `Order` state                                                                                                                            |
 
 ### Migration Note & Architectural Trade-offs
 

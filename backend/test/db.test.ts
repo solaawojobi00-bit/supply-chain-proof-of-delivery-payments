@@ -74,6 +74,16 @@ describe("Database Operations (db.ts)", () => {
     const claimed = getOrder("test-order-1");
     expect(claimed?.status).toBe("Claimed");
     expect(claimed?.claim_tx_hash).toBe("tx-claim-1");
+
+    updateOrderStatus("test-order-1", "Disputed", "dispute_tx_hash", "tx-dispute-1");
+    const disputed = getOrder("test-order-1");
+    expect(disputed?.status).toBe("Disputed");
+    expect(disputed?.dispute_tx_hash).toBe("tx-dispute-1");
+
+    updateOrderStatus("test-order-1", "Claimed", "resolve_tx_hash", "tx-resolve-1");
+    const resolved = getOrder("test-order-1");
+    expect(resolved?.status).toBe("Claimed");
+    expect(resolved?.resolve_tx_hash).toBe("tx-resolve-1");
   });
 
   it("stores and retrieves order by idempotency_key", () => {
@@ -83,6 +93,7 @@ describe("Database Operations (db.ts)", () => {
       buyer_address: "GBUYER123",
       seller_address: "GSELLER123",
       attestor_address: "GATTESTOR123",
+      arbiter_address: "GARBITER123",
       token_contract_id: "GTOKEN123",
       amount: "30000000",
       deadline: Math.floor(Date.now() / 1000) + 7200,
@@ -91,6 +102,8 @@ describe("Database Operations (db.ts)", () => {
       attest_tx_hash: null,
       claim_tx_hash: null,
       reclaim_tx_hash: null,
+      dispute_tx_hash: null,
+      resolve_tx_hash: null,
       idempotency_key: "test-uuid-idem-001",
       request_payload: JSON.stringify({ amount: "30000000" }),
       created_at: new Date().toISOString(),
@@ -100,6 +113,7 @@ describe("Database Operations (db.ts)", () => {
     const retrieved = getOrderByIdempotencyKey("test-uuid-idem-001");
     expect(retrieved).toBeDefined();
     expect(retrieved?.id).toBe("test-order-idemp");
+    expect(retrieved?.arbiter_address).toBe("GARBITER123");
     expect(retrieved?.idempotency_key).toBe("test-uuid-idem-001");
     expect(retrieved?.request_payload).toBe(JSON.stringify({ amount: "30000000" }));
 
