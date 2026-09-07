@@ -7,6 +7,7 @@ import {
 } from "@stellar/stellar-sdk/contract";
 import { config } from "./config.js";
 import { deployerKeypair } from "./keys.js";
+import { logStructured } from "./logger.js";
 
 interface RawOrder {
   buyer: string;
@@ -65,19 +66,42 @@ export async function deployEscrowContract(): Promise<{
   contractId: string;
   txHash: string | undefined;
 }> {
-  const assembled = await ContractClient.deploy<ContractClient & EscrowContract>(null, {
-    ...baseClientOptions,
-    wasmHash: config.wasmHash,
-    format: "hex",
-    publicKey: deployerKeypair.publicKey(),
-    signTransaction: signerFor(deployerKeypair),
-  });
-  const sent = await assembled.signAndSend();
-  const client = sent.result;
-  return {
-    contractId: client.options.contractId,
-    txHash: sent.sendTransactionResponse?.hash,
-  };
+  const start = Date.now();
+  try {
+    const assembled = await ContractClient.deploy<ContractClient & EscrowContract>(null, {
+      ...baseClientOptions,
+      wasmHash: config.wasmHash,
+      format: "hex",
+      publicKey: deployerKeypair.publicKey(),
+      signTransaction: signerFor(deployerKeypair),
+    });
+    const sent = await assembled.signAndSend();
+    const client = sent.result;
+    const contractId = client.options.contractId;
+    const txHash = sent.sendTransactionResponse?.hash;
+    const duration = Date.now() - start;
+    logStructured({
+      type: "contract_call",
+      contractId,
+      method: "deploy",
+      txHash,
+      duration,
+    });
+    return {
+      contractId,
+      txHash,
+    };
+  } catch (err) {
+    const duration = Date.now() - start;
+    logStructured({
+      level: "error",
+      type: "contract_call",
+      method: "deploy",
+      error: err instanceof Error ? err.message : String(err),
+      duration,
+    });
+    throw err;
+  }
 }
 
 async function clientFor(contractId: string, signer: Keypair) {
@@ -94,45 +118,137 @@ export async function callCreate(
   buyer: Keypair,
   params: { seller: string; attestor: string; amount: bigint; deadline: bigint },
 ): Promise<string | undefined> {
-  const client = await clientFor(contractId, buyer);
-  const tx = await client.create({
-    buyer: buyer.publicKey(),
-    seller: params.seller,
-    attestor: params.attestor,
-    token: config.paymentTokenContractId,
-    amount: params.amount,
-    deadline: params.deadline,
-  });
-  const sent = await tx.signAndSend();
-  unwrap(sent.result);
-  return sent.sendTransactionResponse?.hash;
+  const start = Date.now();
+  try {
+    const client = await clientFor(contractId, buyer);
+    const tx = await client.create({
+      buyer: buyer.publicKey(),
+      seller: params.seller,
+      attestor: params.attestor,
+      token: config.paymentTokenContractId,
+      amount: params.amount,
+      deadline: params.deadline,
+    });
+    const sent = await tx.signAndSend();
+    unwrap(sent.result);
+    const txHash = sent.sendTransactionResponse?.hash;
+    const duration = Date.now() - start;
+    logStructured({
+      type: "contract_call",
+      contractId,
+      method: "create",
+      txHash,
+      duration,
+    });
+    return txHash;
+  } catch (err) {
+    const duration = Date.now() - start;
+    logStructured({
+      level: "error",
+      type: "contract_call",
+      contractId,
+      method: "create",
+      error: err instanceof Error ? err.message : String(err),
+      duration,
+    });
+    throw err;
+  }
 }
 
 export async function callAttest(
   contractId: string,
   attestor: Keypair,
 ): Promise<string | undefined> {
-  const client = await clientFor(contractId, attestor);
-  const tx = await client.attest();
-  const sent = await tx.signAndSend();
-  unwrap(sent.result);
-  return sent.sendTransactionResponse?.hash;
+  const start = Date.now();
+  try {
+    const client = await clientFor(contractId, attestor);
+    const tx = await client.attest();
+    const sent = await tx.signAndSend();
+    unwrap(sent.result);
+    const txHash = sent.sendTransactionResponse?.hash;
+    const duration = Date.now() - start;
+    logStructured({
+      type: "contract_call",
+      contractId,
+      method: "attest",
+      txHash,
+      duration,
+    });
+    return txHash;
+  } catch (err) {
+    const duration = Date.now() - start;
+    logStructured({
+      level: "error",
+      type: "contract_call",
+      contractId,
+      method: "attest",
+      error: err instanceof Error ? err.message : String(err),
+      duration,
+    });
+    throw err;
+  }
 }
 
 export async function callClaim(contractId: string, seller: Keypair): Promise<string | undefined> {
-  const client = await clientFor(contractId, seller);
-  const tx = await client.claim();
-  const sent = await tx.signAndSend();
-  unwrap(sent.result);
-  return sent.sendTransactionResponse?.hash;
+  const start = Date.now();
+  try {
+    const client = await clientFor(contractId, seller);
+    const tx = await client.claim();
+    const sent = await tx.signAndSend();
+    unwrap(sent.result);
+    const txHash = sent.sendTransactionResponse?.hash;
+    const duration = Date.now() - start;
+    logStructured({
+      type: "contract_call",
+      contractId,
+      method: "claim",
+      txHash,
+      duration,
+    });
+    return txHash;
+  } catch (err) {
+    const duration = Date.now() - start;
+    logStructured({
+      level: "error",
+      type: "contract_call",
+      contractId,
+      method: "claim",
+      error: err instanceof Error ? err.message : String(err),
+      duration,
+    });
+    throw err;
+  }
 }
 
 export async function callReclaim(contractId: string, buyer: Keypair): Promise<string | undefined> {
-  const client = await clientFor(contractId, buyer);
-  const tx = await client.reclaim();
-  const sent = await tx.signAndSend();
-  unwrap(sent.result);
-  return sent.sendTransactionResponse?.hash;
+  const start = Date.now();
+  try {
+    const client = await clientFor(contractId, buyer);
+    const tx = await client.reclaim();
+    const sent = await tx.signAndSend();
+    unwrap(sent.result);
+    const txHash = sent.sendTransactionResponse?.hash;
+    const duration = Date.now() - start;
+    logStructured({
+      type: "contract_call",
+      contractId,
+      method: "reclaim",
+      txHash,
+      duration,
+    });
+    return txHash;
+  } catch (err) {
+    const duration = Date.now() - start;
+    logStructured({
+      level: "error",
+      type: "contract_call",
+      contractId,
+      method: "reclaim",
+      error: err instanceof Error ? err.message : String(err),
+      duration,
+    });
+    throw err;
+  }
 }
 
 export interface OnChainOrder {
