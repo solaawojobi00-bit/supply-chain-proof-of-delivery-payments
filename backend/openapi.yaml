@@ -24,52 +24,52 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateOrderRequest'
+              $ref: "#/components/schemas/CreateOrderRequest"
       responses:
-        '201':
+        "201":
           description: Order created successfully and funds locked in escrow
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Order'
-        '400':
+                $ref: "#/components/schemas/Order"
+        "400":
           description: Missing or invalid request parameters
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
           description: Server or contract deployment error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
     get:
       summary: List all orders
       description: Returns all orders tracked in the local database.
       operationId: getAllOrders
       responses:
-        '200':
+        "200":
           description: List of all orders
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Order'
-        '400':
+                  $ref: "#/components/schemas/Order"
+        "400":
           description: Invalid request query or parameters
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /orders/{id}:
     get:
@@ -85,24 +85,24 @@ paths:
             type: string
             format: uuid
       responses:
-        '200':
+        "200":
           description: Order details with live on-chain state
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OrderWithChainState'
-        '404':
+                $ref: "#/components/schemas/OrderWithChainState"
+        "404":
           description: Order not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
           description: Internal server error or chain query failure
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /orders/{id}/attest:
     post:
@@ -118,36 +118,36 @@ paths:
             type: string
             format: uuid
       responses:
-        '200':
+        "200":
           description: Order successfully attested
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Order'
-        '400':
+                $ref: "#/components/schemas/Order"
+        "400":
           description: No local signer available for the attestor address
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
           description: Order not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '409':
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
           description: Order is not in Created state or deadline has already passed
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
           description: Transaction execution failure
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /orders/{id}/claim:
     post:
@@ -163,36 +163,36 @@ paths:
             type: string
             format: uuid
       responses:
-        '200':
+        "200":
           description: Funds claimed successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Order'
-        '400':
+                $ref: "#/components/schemas/Order"
+        "400":
           description: No local signer available for the seller address
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
           description: Order not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '409':
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
           description: Order is not in Attested state
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
           description: Transaction execution failure
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
   /orders/{id}/reclaim:
     post:
@@ -208,30 +208,30 @@ paths:
             type: string
             format: uuid
       responses:
-        '200':
+        "200":
           description: Funds reclaimed successfully by buyer
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Order'
-        '404':
+                $ref: "#/components/schemas/Order"
+        "404":
           description: Order not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '409':
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
           description: Order is not in Created state or deadline has not yet passed
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
           description: Transaction execution failure
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
   schemas:
@@ -358,7 +358,7 @@ components:
           description: High-level human-readable lifecycle label
           example: "in-transit"
         txHashes:
-          $ref: '#/components/schemas/OrderTxHashes'
+          $ref: "#/components/schemas/OrderTxHashes"
         createdAt:
           type: string
           format: date-time
@@ -402,13 +402,13 @@ components:
 
     OrderWithChainState:
       allOf:
-        - $ref: '#/components/schemas/Order'
+        - $ref: "#/components/schemas/Order"
         - type: object
           required:
             - onChain
           properties:
             onChain:
-              $ref: '#/components/schemas/OnChainState'
+              $ref: "#/components/schemas/OnChainState"
 
     ErrorResponse:
       type: object
