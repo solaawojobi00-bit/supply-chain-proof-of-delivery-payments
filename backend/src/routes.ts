@@ -57,12 +57,14 @@ router.post(
     if (!parseResult.success) {
       throw new HttpError(400, formatZodError(parseResult.error));
     }
-    const { sellerAddress, attestorAddress, amountStroops, deadlineSeconds } = parseResult.data;
+    const { sellerAddress, attestorAddress, amountStroops, deadlineSeconds, tokenContractId } =
+      parseResult.data;
     const normalizedPayload = JSON.stringify({
       sellerAddress,
       attestorAddress,
       amountStroops,
       deadlineSeconds,
+      tokenContractId,
     });
 
     if (idempotencyKey) {
@@ -85,6 +87,7 @@ router.post(
         attestorAddress,
         amountStroops: BigInt(amountStroops),
         deadlineSeconds: BigInt(deadlineSeconds),
+        tokenContractId,
       },
       idempotencyKey,
       normalizedPayload,

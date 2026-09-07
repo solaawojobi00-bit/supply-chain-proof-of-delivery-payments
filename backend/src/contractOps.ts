@@ -116,7 +116,7 @@ async function clientFor(contractId: string, signer: Keypair) {
 export async function callCreate(
   contractId: string,
   buyer: Keypair,
-  params: { seller: string; attestor: string; amount: bigint; deadline: bigint },
+  params: { seller: string; attestor: string; token?: string; amount: bigint; deadline: bigint },
 ): Promise<string | undefined> {
   const start = Date.now();
   try {
@@ -125,7 +125,7 @@ export async function callCreate(
       buyer: buyer.publicKey(),
       seller: params.seller,
       attestor: params.attestor,
-      token: config.paymentTokenContractId,
+      token: params.token ?? config.paymentTokenContractId,
       amount: params.amount,
       deadline: params.deadline,
     });

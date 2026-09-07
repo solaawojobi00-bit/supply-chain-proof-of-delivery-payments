@@ -488,6 +488,58 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
         }),
       });
       expect(res3.status).toBe(400);
+
+      // Malformed tokenContractId
+      const res4 = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestorAddress: attestorKeypair.publicKey(),
+          amountStroops: "10000000",
+          deadlineSeconds: String(deadline),
+          tokenContractId: "not-a-valid-contract-id",
+        }),
+      });
+      expect(res4.status).toBe(400);
+      const error4 = (await res4.json()) as { error: string };
+      expect(error4.error).toContain("tokenContractId");
+    });
+
+    it("Multi-asset: successfully creates, attests, and claims order with custom tokenContractId", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const customToken = "CAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRDB3V";
+
+      const createRes = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestorAddress: attestorKeypair.publicKey(),
+          amountStroops: "25000000",
+          deadlineSeconds: String(deadline),
+          tokenContractId: customToken,
+        }),
+      });
+      expect(createRes.status).toBe(201);
+      const order = (await createRes.json()) as {
+        id: string;
+        tokenContractId: string;
+        status: string;
+      };
+      expect(order.tokenContractId).toBe(customToken);
+      expect(order.status).toBe("Created");
+
+      // Attest
+      const attestRes = await fetch(`${baseUrl}/orders/${order.id}/attest`, { method: "POST" });
+      expect(attestRes.status).toBe(200);
+
+      // Claim
+      const claimRes = await fetch(`${baseUrl}/orders/${order.id}/claim`, { method: "POST" });
+      expect(claimRes.status).toBe(200);
+      const claimed = (await claimRes.json()) as { tokenContractId: string; status: string };
+      expect(claimed.tokenContractId).toBe(customToken);
+      expect(claimed.status).toBe("Claimed");
     });
   });
 });

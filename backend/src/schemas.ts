@@ -9,6 +9,14 @@ function isValidStellarAddress(val: string): boolean {
   }
 }
 
+function isValidContractAddress(val: string): boolean {
+  try {
+    return StrKey.isValidContract(val);
+  } catch {
+    return false;
+  }
+}
+
 export const createOrderSchema = z.object({
   sellerAddress: z
     .string({ message: "sellerAddress is required" })
@@ -48,6 +56,12 @@ export const createOrderSchema = z.object({
         message: "deadlineSeconds must be a timestamp in the future",
       },
     ),
+  tokenContractId: z
+    .string()
+    .refine(isValidContractAddress, {
+      message: "tokenContractId must be a valid Stellar contract address (C...)",
+    })
+    .optional(),
 });
 
 export type CreateOrderBody = z.infer<typeof createOrderSchema>;

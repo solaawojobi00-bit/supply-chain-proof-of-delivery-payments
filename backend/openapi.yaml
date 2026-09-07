@@ -259,6 +259,10 @@ components:
           type: string
           description: UNIX timestamp (seconds) after which funds can be reclaimed if unattested
           example: "1735689600"
+        tokenContractId:
+          type: string
+          description: Optional Stellar contract address (C...) of the payment token; defaults to configured native XLM asset if omitted
+          example: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
 
     OrderTxHashes:
       type: object

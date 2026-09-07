@@ -87,13 +87,40 @@ npm run demo:reclaim   # create with a short deadline -> deadline passes -> recl
 Each prints the order at every lifecycle step, including the real testnet
 transaction hash for every state-changing call.
 
+### Multi-Asset Support (Non-Native Tokens)
+
+The escrow smart contracts and REST API accept any Stellar Asset Contract (SAC) or custom Soroban token. To test with a non-native asset on testnet:
+
+1. **Derive or Deploy the Asset Contract ID**:
+   ```bash
+   # Example: Obtain the SAC contract address for an issued test asset
+   stellar contract id asset --asset <ASSET_CODE>:<ISSUER_PUBLIC_KEY> --network testnet
+   ```
+
+2. **Supply `tokenContractId` in `POST /orders`**:
+   ```json
+   {
+     "sellerAddress": "GC5H3W256B3QW4A44GAK36XN763K2KRN7O2OESN553TUXW7R6AKN4V6E",
+     "attestorAddress": "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI",
+     "amountStroops": "10000000",
+     "deadlineSeconds": "1735689600",
+     "tokenContractId": "<TOKEN_CONTRACT_ID>"
+   }
+   ```
+   *(If omitted, `tokenContractId` defaults to the native XLM Stellar Asset Contract configured in `.env`).*
+
+3. **Run Demo with Custom Token**:
+   ```bash
+   npm run demo:claim -- --token=<TOKEN_CONTRACT_ID>
+   ```
+
 ## API
 
 A complete machine-readable OpenAPI 3.0 specification is available at [`backend/openapi.yaml`](backend/openapi.yaml).
 
 | Endpoint | Effect |
 |---|---|
-| `POST /orders` | Create an order: `{ sellerAddress, attestorAddress, amountStroops, deadlineSeconds }` |
+| `POST /orders` | Create an order: `{ sellerAddress, attestorAddress, amountStroops, deadlineSeconds, tokenContractId? }` |
 | `GET /orders` | List all orders |
 | `GET /orders/:id` | Order status, including a live on-chain read |
 | `POST /orders/:id/attest` | Attestor confirms delivery |

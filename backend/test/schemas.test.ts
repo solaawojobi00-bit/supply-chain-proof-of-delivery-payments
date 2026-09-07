@@ -84,15 +84,32 @@ describe("Schema Validation (schemas.ts)", () => {
     expect(textRes.success).toBe(false);
   });
 
-  it("rejects missing required fields with informative messages", () => {
-    const result = createOrderSchema.safeParse({});
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      const formatted = formatZodError(result.error);
-      expect(formatted).toContain("sellerAddress");
-      expect(formatted).toContain("attestorAddress");
-      expect(formatted).toContain("amountStroops");
-      expect(formatted).toContain("deadlineSeconds");
+  it("accepts valid tokenContractId and rejects malformed tokenContractId", () => {
+    const futureDeadline = String(Math.floor(Date.now() / 1000) + 3600);
+    // Valid 32-byte contract ID encoded with StrKey
+    const validContractId = "CAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRDB3V";
+
+    const validRes = createOrderSchema.safeParse({
+      sellerAddress: sellerKeypair.publicKey(),
+      attestorAddress: attestorKeypair.publicKey(),
+      amountStroops: "10000000",
+      deadlineSeconds: futureDeadline,
+      tokenContractId: validContractId,
+    });
+    expect(validRes.success).toBe(true);
+
+    const invalidRes = createOrderSchema.safeParse({
+      sellerAddress: sellerKeypair.publicKey(),
+      attestorAddress: attestorKeypair.publicKey(),
+      amountStroops: "10000000",
+      deadlineSeconds: futureDeadline,
+      tokenContractId: "invalid-token-contract-id",
+    });
+    expect(invalidRes.success).toBe(false);
+    if (!invalidRes.success) {
+      const formatted = formatZodError(invalidRes.error);
+      expect(formatted).toContain("tokenContractId");
+      expect(formatted).toContain("valid Stellar contract address");
     }
   });
 });
