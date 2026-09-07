@@ -2,6 +2,7 @@ import { Keypair } from "@stellar/stellar-sdk";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { attestorKeypair, buyerKeypair, sellerKeypair } from "../src/keys.js";
+import { config } from "../src/config.js";
 import { db } from "../src/db.js";
 
 // Mock contractOps so integration tests run deterministically and fast in CI
@@ -68,6 +69,10 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
   let server: Server;
   let baseUrl: string;
 
+  const buyerAuth = { Authorization: `Bearer ${config.buyerApiKey}` };
+  const sellerAuth = { Authorization: `Bearer ${config.sellerApiKey}` };
+  const attestorAuth = { Authorization: `Bearer ${config.attestorApiKey}` };
+
   beforeAll(async () => {
     server = app.listen(0);
     const address = server.address();
@@ -122,6 +127,7 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
         attestorAddress: string;
         amountStroops: string;
         deadline: number;
+        tokens?: { buyer: string; seller: string; attestor: string };
         txHashes: {
           create: string;
           attest: string | null;
@@ -138,6 +144,7 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       expect(created.attestorAddress).toBe(attestorKeypair.publicKey());
       expect(created.amountStroops).toBe(amountStroops);
       expect(created.deadline).toBe(deadline);
+      expect(created.tokens).toBeDefined();
       expect(created.txHashes.create).toBe("mock-create-tx-hash");
       expect(created.txHashes.attest).toBeNull();
 
@@ -155,9 +162,10 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       expect(fetched.lifecycle).toBe("in-transit");
       expect(fetched.onChain.status).toBe("Created");
 
-      // 3. Attest Delivery
+      // 3. Attest Delivery with attestor credentials
       const attestRes = await fetch(`${baseUrl}/orders/${created.id}/attest`, {
         method: "POST",
+        headers: { Authorization: `Bearer ${created.tokens!.attestor}` },
       });
       expect(attestRes.status).toBe(200);
       const attested = (await attestRes.json()) as {
@@ -171,9 +179,10 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       expect(attested.lifecycle).toBe("delivered/confirmed");
       expect(attested.txHashes.attest).toBe("mock-attest-tx-hash");
 
-      // 4. Seller Claims Escrowed Funds
+      // 4. Seller Claims Escrowed Funds with seller credentials
       const claimRes = await fetch(`${baseUrl}/orders/${created.id}/claim`, {
         method: "POST",
+        headers: { Authorization: `Bearer ${created.tokens!.seller}` },
       });
       expect(claimRes.status).toBe(200);
       const claimed = (await claimRes.json()) as {
@@ -207,7 +216,6 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
 
   describe("Full Lifecycle 2: Expiration & Reclaim Path (Create -> Expired -> Reclaim)", () => {
     it("executes the buyer reclaim flow after deadline passes without attestation", async () => {
-      // Create with a future deadline (to pass validation), then test reclaim after deadline
       const deadline = Math.floor(Date.now() / 1000) + 3600;
 
       const createRes = await fetch(`${baseUrl}/orders`, {
@@ -221,7 +229,11 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
         }),
       });
       expect(createRes.status).toBe(201);
-      const created = (await createRes.json()) as { id: string; status: string };
+      const created = (await createRes.json()) as {
+        id: string;
+        status: string;
+        tokens: { buyer: string };
+      };
 
       // Manually set deadline to past in database
       db.prepare("UPDATE orders SET deadline = ? WHERE id = ?").run(
@@ -235,9 +247,10 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       expect(fetched.status).toBe("Created");
       expect(fetched.lifecycle).toBe("deadline-passed");
 
-      // Buyer reclaims funds
+      // Buyer reclaims funds with buyer credential
       const reclaimRes = await fetch(`${baseUrl}/orders/${created.id}/reclaim`, {
         method: "POST",
+        headers: { Authorization: `Bearer ${created.tokens.buyer}` },
       });
       expect(reclaimRes.status).toBe(200);
       const reclaimed = (await reclaimRes.json()) as {
@@ -274,11 +287,16 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
         }),
       });
       expect(createRes.status).toBe(201);
-      const created = (await createRes.json()) as { id: string; status: string };
+      const created = (await createRes.json()) as {
+        id: string;
+        status: string;
+        tokens: { buyer: string };
+      };
 
-      // Cancel order mutually
+      // Cancel order mutually with buyer credential
       const cancelRes = await fetch(`${baseUrl}/orders/${created.id}/cancel`, {
         method: "POST",
+        headers: { Authorization: `Bearer ${created.tokens.buyer}` },
       });
       expect(cancelRes.status).toBe(200);
       const cancelled = (await cancelRes.json()) as {
@@ -313,15 +331,27 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
           deadlineSeconds: String(deadline),
         }),
       });
-      const order = (await createRes.json()) as { id: string };
+      const order = (await createRes.json()) as {
+        id: string;
+        tokens: { attestor: string; seller: string };
+      };
 
       // Attest and claim
-      await fetch(`${baseUrl}/orders/${order.id}/attest`, { method: "POST" });
-      const firstClaimRes = await fetch(`${baseUrl}/orders/${order.id}/claim`, { method: "POST" });
+      await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.attestor}` },
+      });
+      const firstClaimRes = await fetch(`${baseUrl}/orders/${order.id}/claim`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.seller}` },
+      });
       expect(firstClaimRes.status).toBe(200);
 
       // Attempt second claim
-      const secondClaimRes = await fetch(`${baseUrl}/orders/${order.id}/claim`, { method: "POST" });
+      const secondClaimRes = await fetch(`${baseUrl}/orders/${order.id}/claim`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.seller}` },
+      });
       expect(secondClaimRes.status).toBe(409);
       const errorBody = (await secondClaimRes.json()) as { error: string };
       expect(errorBody.error).toContain(
@@ -341,12 +371,24 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
           deadlineSeconds: String(deadline),
         }),
       });
-      const order = (await createRes.json()) as { id: string };
+      const order = (await createRes.json()) as {
+        id: string;
+        tokens: { attestor: string; seller: string; buyer: string };
+      };
 
-      await fetch(`${baseUrl}/orders/${order.id}/attest`, { method: "POST" });
-      await fetch(`${baseUrl}/orders/${order.id}/claim`, { method: "POST" });
+      await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.attestor}` },
+      });
+      await fetch(`${baseUrl}/orders/${order.id}/claim`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.seller}` },
+      });
 
-      const reclaimRes = await fetch(`${baseUrl}/orders/${order.id}/reclaim`, { method: "POST" });
+      const reclaimRes = await fetch(`${baseUrl}/orders/${order.id}/reclaim`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.buyer}` },
+      });
       expect(reclaimRes.status).toBe(409);
       const errorBody = (await reclaimRes.json()) as { error: string };
       expect(errorBody.error).toContain(
@@ -366,7 +408,7 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
           deadlineSeconds: String(deadline),
         }),
       });
-      const order = (await createRes.json()) as { id: string };
+      const order = (await createRes.json()) as { id: string; tokens: { attestor: string } };
 
       // Expire order in DB
       db.prepare("UPDATE orders SET deadline = ? WHERE id = ?").run(
@@ -374,7 +416,10 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
         order.id,
       );
 
-      const attestRes = await fetch(`${baseUrl}/orders/${order.id}/attest`, { method: "POST" });
+      const attestRes = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.attestor}` },
+      });
       expect(attestRes.status).toBe(409);
       const errorBody = (await attestRes.json()) as { error: string };
       expect(errorBody.error).toContain("Deadline has already passed");
@@ -392,10 +437,13 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
           deadlineSeconds: String(deadline),
         }),
       });
-      const order = (await createRes.json()) as { id: string };
+      const order = (await createRes.json()) as { id: string; tokens: { seller: string } };
 
       // Attempt claim directly
-      const claimRes = await fetch(`${baseUrl}/orders/${order.id}/claim`, { method: "POST" });
+      const claimRes = await fetch(`${baseUrl}/orders/${order.id}/claim`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.seller}` },
+      });
       expect(claimRes.status).toBe(409);
       const errorBody = (await claimRes.json()) as { error: string };
       expect(errorBody.error).toContain(
@@ -415,9 +463,12 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
           deadlineSeconds: String(deadline),
         }),
       });
-      const order = (await createRes.json()) as { id: string };
+      const order = (await createRes.json()) as { id: string; tokens: { buyer: string } };
 
-      const reclaimRes = await fetch(`${baseUrl}/orders/${order.id}/reclaim`, { method: "POST" });
+      const reclaimRes = await fetch(`${baseUrl}/orders/${order.id}/reclaim`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.buyer}` },
+      });
       expect(reclaimRes.status).toBe(409);
       const errorBody = (await reclaimRes.json()) as { error: string };
       expect(errorBody.error).toContain("Deadline has not passed yet");
@@ -435,16 +486,25 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
           deadlineSeconds: String(deadline),
         }),
       });
-      const order = (await createRes.json()) as { id: string };
+      const order = (await createRes.json()) as {
+        id: string;
+        tokens: { buyer: string; attestor: string };
+      };
 
       // Expire and reclaim
       db.prepare("UPDATE orders SET deadline = ? WHERE id = ?").run(
         Math.floor(Date.now() / 1000) - 10,
         order.id,
       );
-      await fetch(`${baseUrl}/orders/${order.id}/reclaim`, { method: "POST" });
+      await fetch(`${baseUrl}/orders/${order.id}/reclaim`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.buyer}` },
+      });
 
-      const attestRes = await fetch(`${baseUrl}/orders/${order.id}/attest`, { method: "POST" });
+      const attestRes = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.attestor}` },
+      });
       expect(attestRes.status).toBe(409);
       const errorBody = (await attestRes.json()) as { error: string };
       expect(errorBody.error).toContain(
@@ -467,9 +527,12 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
           deadlineSeconds: String(deadline),
         }),
       });
-      const order1 = (await createRes1.json()) as { id: string };
+      const order1 = (await createRes1.json()) as { id: string; tokens: { attestor: string } };
 
-      const attestRes = await fetch(`${baseUrl}/orders/${order1.id}/attest`, { method: "POST" });
+      const attestRes = await fetch(`${baseUrl}/orders/${order1.id}/attest`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order1.tokens.attestor}` },
+      });
       expect(attestRes.status).toBe(400);
       const attestError = (await attestRes.json()) as { error: string };
       expect(attestError.error).toContain("No local signer for this attestor address");
@@ -485,14 +548,23 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
           deadlineSeconds: String(deadline),
         }),
       });
-      const order2 = (await createRes2.json()) as { id: string };
+      const order2 = (await createRes2.json()) as {
+        id: string;
+        tokens: { attestor: string; seller: string };
+      };
 
       // Attest succeeds because attestor is local
-      const attestRes2 = await fetch(`${baseUrl}/orders/${order2.id}/attest`, { method: "POST" });
+      const attestRes2 = await fetch(`${baseUrl}/orders/${order2.id}/attest`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order2.tokens.attestor}` },
+      });
       expect(attestRes2.status).toBe(200);
 
       // Claim fails because seller is external
-      const claimRes2 = await fetch(`${baseUrl}/orders/${order2.id}/claim`, { method: "POST" });
+      const claimRes2 = await fetch(`${baseUrl}/orders/${order2.id}/claim`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order2.tokens.seller}` },
+      });
       expect(claimRes2.status).toBe(400);
       const claimError = (await claimRes2.json()) as { error: string };
       expect(claimError.error).toContain("No local signer for this seller address");
@@ -506,19 +578,25 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
 
       const attestRes = await fetch(`${baseUrl}/orders/${nonExistentId}/attest`, {
         method: "POST",
+        headers: attestorAuth,
       });
       expect(attestRes.status).toBe(404);
 
-      const claimRes = await fetch(`${baseUrl}/orders/${nonExistentId}/claim`, { method: "POST" });
+      const claimRes = await fetch(`${baseUrl}/orders/${nonExistentId}/claim`, {
+        method: "POST",
+        headers: sellerAuth,
+      });
       expect(claimRes.status).toBe(404);
 
       const reclaimRes = await fetch(`${baseUrl}/orders/${nonExistentId}/reclaim`, {
         method: "POST",
+        headers: buyerAuth,
       });
       expect(reclaimRes.status).toBe(404);
 
       const cancelRes = await fetch(`${baseUrl}/orders/${nonExistentId}/cancel`, {
         method: "POST",
+        headers: buyerAuth,
       });
       expect(cancelRes.status).toBe(404);
     });
@@ -535,11 +613,20 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
           deadlineSeconds: String(deadline),
         }),
       });
-      const order = (await createRes.json()) as { id: string };
+      const order = (await createRes.json()) as {
+        id: string;
+        tokens: { attestor: string; buyer: string };
+      };
 
-      await fetch(`${baseUrl}/orders/${order.id}/attest`, { method: "POST" });
+      await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.attestor}` },
+      });
 
-      const cancelRes = await fetch(`${baseUrl}/orders/${order.id}/cancel`, { method: "POST" });
+      const cancelRes = await fetch(`${baseUrl}/orders/${order.id}/cancel`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.buyer}` },
+      });
       expect(cancelRes.status).toBe(409);
       const errorBody = (await cancelRes.json()) as { error: string };
       expect(errorBody.error).toContain(
@@ -559,16 +646,22 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
           deadlineSeconds: String(deadline),
         }),
       });
-      const order = (await createRes.json()) as { id: string };
+      const order = (await createRes.json()) as { id: string; tokens: { buyer: string } };
 
       // Expire and reclaim
       db.prepare("UPDATE orders SET deadline = ? WHERE id = ?").run(
         Math.floor(Date.now() / 1000) - 10,
         order.id,
       );
-      await fetch(`${baseUrl}/orders/${order.id}/reclaim`, { method: "POST" });
+      await fetch(`${baseUrl}/orders/${order.id}/reclaim`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.buyer}` },
+      });
 
-      const cancelRes = await fetch(`${baseUrl}/orders/${order.id}/cancel`, { method: "POST" });
+      const cancelRes = await fetch(`${baseUrl}/orders/${order.id}/cancel`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.buyer}` },
+      });
       expect(cancelRes.status).toBe(409);
       const errorBody = (await cancelRes.json()) as { error: string };
       expect(errorBody.error).toContain(
@@ -655,16 +748,23 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
         id: string;
         tokenContractId: string;
         status: string;
+        tokens: { attestor: string; seller: string };
       };
       expect(order.tokenContractId).toBe(customToken);
       expect(order.status).toBe("Created");
 
       // Attest
-      const attestRes = await fetch(`${baseUrl}/orders/${order.id}/attest`, { method: "POST" });
+      const attestRes = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.attestor}` },
+      });
       expect(attestRes.status).toBe(200);
 
       // Claim
-      const claimRes = await fetch(`${baseUrl}/orders/${order.id}/claim`, { method: "POST" });
+      const claimRes = await fetch(`${baseUrl}/orders/${order.id}/claim`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.seller}` },
+      });
       expect(claimRes.status).toBe(200);
       const claimed = (await claimRes.json()) as { tokenContractId: string; status: string };
       expect(claimed.tokenContractId).toBe(customToken);
@@ -693,18 +793,25 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
         status: string;
         threshold: number;
         confirmations: string[];
+        tokens: { attestor: string; seller: string };
       };
       expect(order.threshold).toBe(2);
       expect(order.status).toBe("Created");
 
       // 2. Attempt claim before any attestation -> 409
-      const earlyClaim = await fetch(`${baseUrl}/orders/${order.id}/claim`, { method: "POST" });
+      const earlyClaim = await fetch(`${baseUrl}/orders/${order.id}/claim`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.seller}` },
+      });
       expect(earlyClaim.status).toBe(409);
 
       // 3. First attestor confirms -> status remains Created, 1 confirmation recorded
       const attest1 = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${order.tokens.attestor}`,
+        },
         body: JSON.stringify({ attestorAddress: attestorKeypair.publicKey() }),
       });
       expect(attest1.status).toBe(200);
@@ -715,13 +822,17 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       // 4. Attempt claim after 1 of 2 confirmations -> 409
       const stillEarlyClaim = await fetch(`${baseUrl}/orders/${order.id}/claim`, {
         method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.seller}` },
       });
       expect(stillEarlyClaim.status).toBe(409);
 
       // 5. Second attestor confirms -> threshold (2) reached, transitions to Attested
       const attest2 = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${order.tokens.attestor}`,
+        },
         body: JSON.stringify({ attestorAddress: buyerKeypair.publicKey() }),
       });
       expect(attest2.status).toBe(200);
@@ -730,7 +841,10 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       expect(fullOrder.confirmations).toHaveLength(2);
 
       // 6. Seller can now claim
-      const finalClaim = await fetch(`${baseUrl}/orders/${order.id}/claim`, { method: "POST" });
+      const finalClaim = await fetch(`${baseUrl}/orders/${order.id}/claim`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.seller}` },
+      });
       expect(finalClaim.status).toBe(200);
       const finalOrder = (await finalClaim.json()) as { status: string };
       expect(finalOrder.status).toBe("Claimed");
@@ -752,26 +866,41 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
           deadlineSeconds: String(deadline),
         }),
       });
-      const order = (await createRes.json()) as { id: string };
+      const order = (await createRes.json()) as {
+        id: string;
+        tokens: { attestor: string; buyer: string; seller: string; arbiter: string };
+      };
 
       // 2. Attest order
-      await fetch(`${baseUrl}/orders/${order.id}/attest`, { method: "POST" });
+      await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.attestor}` },
+      });
 
       // 3. Buyer disputes
-      const disputeRes = await fetch(`${baseUrl}/orders/${order.id}/dispute`, { method: "POST" });
+      const disputeRes = await fetch(`${baseUrl}/orders/${order.id}/dispute`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.buyer}` },
+      });
       expect(disputeRes.status).toBe(200);
       const disputed = (await disputeRes.json()) as { status: string; lifecycle: string };
       expect(disputed.status).toBe("Disputed");
       expect(disputed.lifecycle).toBe("disputed");
 
       // 4. Seller claim is blocked while disputed -> 409 Conflict
-      const claimRes = await fetch(`${baseUrl}/orders/${order.id}/claim`, { method: "POST" });
+      const claimRes = await fetch(`${baseUrl}/orders/${order.id}/claim`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.seller}` },
+      });
       expect(claimRes.status).toBe(409);
 
       // 5. Arbiter resolves releasing to seller
       const resolveRes = await fetch(`${baseUrl}/orders/${order.id}/resolve`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${order.tokens.arbiter}`,
+        },
         body: JSON.stringify({ releaseToSeller: true }),
       });
       expect(resolveRes.status).toBe(200);
@@ -799,18 +928,30 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
           deadlineSeconds: String(deadline),
         }),
       });
-      const order = (await createRes.json()) as { id: string };
+      const order = (await createRes.json()) as {
+        id: string;
+        tokens: { attestor: string; buyer: string; arbiter: string };
+      };
 
       // 2. Attest order
-      await fetch(`${baseUrl}/orders/${order.id}/attest`, { method: "POST" });
+      await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.attestor}` },
+      });
 
       // 3. Buyer disputes
-      await fetch(`${baseUrl}/orders/${order.id}/dispute`, { method: "POST" });
+      await fetch(`${baseUrl}/orders/${order.id}/dispute`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.buyer}` },
+      });
 
       // 4. Arbiter resolves refunding to buyer
       const resolveRes = await fetch(`${baseUrl}/orders/${order.id}/resolve`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${order.tokens.arbiter}`,
+        },
         body: JSON.stringify({ releaseToSeller: false }),
       });
       expect(resolveRes.status).toBe(200);
@@ -838,18 +979,25 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
         }),
       });
       expect(createRes.status).toBe(201);
-      const order = (await createRes.json()) as { id: string };
+      const order = (await createRes.json()) as {
+        id: string;
+        tokens: { attestor: string; seller: string };
+      };
 
       // 2. Direct server signing fails for unconfigured attestor
       const directAttestRes = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
         method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.attestor}` },
       });
       expect(directAttestRes.status).toBe(400);
 
       // 3. Client-side wallet signing requests unsigned attest XDR
       const buildAttestRes = await fetch(`${baseUrl}/orders/${order.id}/attest?unsigned=true`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${order.tokens.attestor}`,
+        },
         body: JSON.stringify({ attestorAddress: externalAttestor.publicKey() }),
       });
       expect(buildAttestRes.status).toBe(200);
@@ -863,7 +1011,10 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       // 4. Wallet signs XDR and submits to /tx/submit
       const submitAttestRes = await fetch(`${baseUrl}/tx/submit`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${order.tokens.attestor}`,
+        },
         body: JSON.stringify({
           signedXdr: "mock-freighter-signed-attest-xdr",
           orderId: order.id,
@@ -878,6 +1029,7 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       // 5. Build unsigned claim XDR for external seller
       const buildClaimRes = await fetch(`${baseUrl}/orders/${order.id}/claim?unsigned=true`, {
         method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.seller}` },
       });
       expect(buildClaimRes.status).toBe(200);
       const claimUnsigned = (await buildClaimRes.json()) as {
@@ -889,7 +1041,10 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       // 6. Submit signed claim XDR
       const submitClaimRes = await fetch(`${baseUrl}/orders/${order.id}/submit`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${order.tokens.seller}`,
+        },
         body: JSON.stringify({
           signedXdr: "mock-freighter-signed-claim-xdr",
           action: "claim",
@@ -898,6 +1053,62 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       expect(submitClaimRes.status).toBe(200);
       const claimResult = (await submitClaimRes.json()) as { txHash: string };
       expect(claimResult.txHash).toBe("mock-wallet-signed-tx-hash");
+    });
+  });
+
+  describe("Full Lifecycle 6: Per-Role API Authentication (Issue #12)", () => {
+    it("enforces role isolation and rejects unauthorized parties with 403 Forbidden", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+      // 1. Create order
+      const createRes = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestorAddress: attestorKeypair.publicKey(),
+          amountStroops: "100000000",
+          deadlineSeconds: String(deadline),
+        }),
+      });
+      const order = (await createRes.json()) as {
+        id: string;
+        tokens: { buyer: string; seller: string; attestor: string; arbiter: string };
+      };
+
+      // 2. Attest endpoint rejects buyer, seller, arbiter with 403
+      const attestBuyer = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.buyer}` },
+      });
+      expect(attestBuyer.status).toBe(403);
+
+      const attestSeller = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.seller}` },
+      });
+      expect(attestSeller.status).toBe(403);
+
+      // 3. Attest endpoint accepts attestor token
+      const attestAttestor = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.attestor}` },
+      });
+      expect(attestAttestor.status).toBe(200);
+
+      // 4. Claim endpoint rejects attestor with 403
+      const claimAttestor = await fetch(`${baseUrl}/orders/${order.id}/claim`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.attestor}` },
+      });
+      expect(claimAttestor.status).toBe(403);
+
+      // 5. Claim endpoint accepts seller token
+      const claimSeller = await fetch(`${baseUrl}/orders/${order.id}/claim`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.seller}` },
+      });
+      expect(claimSeller.status).toBe(200);
     });
   });
 });

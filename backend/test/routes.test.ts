@@ -1,6 +1,8 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import { describe, expect, it, vi, beforeAll, afterAll } from "vitest";
 import { attestorKeypair, buyerKeypair, sellerKeypair } from "../src/keys.js";
+import { config } from "../src/config.js";
+import { db } from "../src/db.js";
 import { HttpError } from "../src/httpError.js";
 
 vi.mock("../src/contractOps.js", () => ({
@@ -67,6 +69,10 @@ import type { Server } from "node:http";
 describe("API Routes (routes.ts)", () => {
   let server: Server;
   let baseUrl: string;
+
+  const buyerAuth = { Authorization: `Bearer ${config.buyerApiKey}` };
+  const attestorAuth = { Authorization: `Bearer ${config.attestorApiKey}` };
+  const arbiterAuth = { Authorization: `Bearer ${config.arbiterApiKey}` };
 
   beforeAll(async () => {
     const app = express();
@@ -140,7 +146,7 @@ describe("API Routes (routes.ts)", () => {
     expect(body.error).toContain("future");
   });
 
-  it("POST /orders creates a new order and returns 201 with serialized order", async () => {
+  it("POST /orders creates a new order and returns 201 with serialized order and tokens", async () => {
     const deadline = Math.floor(Date.now() / 1000) + 3600;
     const res = await fetch(`${baseUrl}/orders`, {
       method: "POST",
@@ -159,6 +165,10 @@ describe("API Routes (routes.ts)", () => {
     expect(order.lifecycle).toBe("in-transit");
     expect(order.sellerAddress).toBe(sellerKeypair.publicKey());
     expect(order.attestorAddress).toBe(attestorKeypair.publicKey());
+    expect(order.tokens).toBeDefined();
+    expect(order.tokens.buyer).toBeDefined();
+    expect(order.tokens.seller).toBeDefined();
+    expect(order.tokens.attestor).toBeDefined();
     expect(order.txHashes.create).toBe("mock-create-hash");
   });
 
@@ -212,6 +222,7 @@ describe("API Routes (routes.ts)", () => {
 
     const attestRes = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
       method: "POST",
+      headers: { Authorization: `Bearer ${order.tokens.attestor}` },
     });
     expect(attestRes.status).toBe(200);
     const attestedOrder = (await attestRes.json()) as any;
@@ -220,6 +231,7 @@ describe("API Routes (routes.ts)", () => {
 
     const claimRes = await fetch(`${baseUrl}/orders/${order.id}/claim`, {
       method: "POST",
+      headers: { Authorization: `Bearer ${order.tokens.seller}` },
     });
     expect(claimRes.status).toBe(200);
     const claimedOrder = (await claimRes.json()) as any;
@@ -317,6 +329,7 @@ describe("API Routes (routes.ts)", () => {
 
     const cancelRes = await fetch(`${baseUrl}/orders/${order.id}/cancel`, {
       method: "POST",
+      headers: { Authorization: `Bearer ${order.tokens.buyer}` },
     });
     expect(cancelRes.status).toBe(200);
     const cancelledOrder = (await cancelRes.json()) as any;
@@ -341,10 +354,12 @@ describe("API Routes (routes.ts)", () => {
 
     await fetch(`${baseUrl}/orders/${order.id}/attest`, {
       method: "POST",
+      headers: attestorAuth,
     });
 
     const cancelRes = await fetch(`${baseUrl}/orders/${order.id}/cancel`, {
       method: "POST",
+      headers: buyerAuth,
     });
     expect(cancelRes.status).toBe(409);
     const body = (await cancelRes.json()) as { error: string };
@@ -373,7 +388,7 @@ describe("API Routes (routes.ts)", () => {
     // First attestation
     const attest1Res = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...attestorAuth },
       body: JSON.stringify({ attestorAddress: attestorKeypair.publicKey() }),
     });
     expect(attest1Res.status).toBe(200);
@@ -384,7 +399,7 @@ describe("API Routes (routes.ts)", () => {
     // Second attestation completes threshold
     const attest2Res = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...attestorAuth },
       body: JSON.stringify({ attestorAddress: buyerKeypair.publicKey() }),
     });
     expect(attest2Res.status).toBe(200);
@@ -408,11 +423,15 @@ describe("API Routes (routes.ts)", () => {
     const order = (await createRes.json()) as any;
 
     // Attest order
-    await fetch(`${baseUrl}/orders/${order.id}/attest`, { method: "POST" });
+    await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+      method: "POST",
+      headers: attestorAuth,
+    });
 
     // Dispute order
     const disputeRes = await fetch(`${baseUrl}/orders/${order.id}/dispute`, {
       method: "POST",
+      headers: buyerAuth,
     });
     expect(disputeRes.status).toBe(200);
     const disputedOrder = (await disputeRes.json()) as any;
@@ -423,7 +442,7 @@ describe("API Routes (routes.ts)", () => {
     // Resolve dispute releasing to seller
     const resolveRes = await fetch(`${baseUrl}/orders/${order.id}/resolve`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...arbiterAuth },
       body: JSON.stringify({ releaseToSeller: true }),
     });
     expect(resolveRes.status).toBe(200);
@@ -431,6 +450,112 @@ describe("API Routes (routes.ts)", () => {
     expect(resolvedOrder.status).toBe("Claimed");
     expect(resolvedOrder.lifecycle).toBe("claimed");
     expect(resolvedOrder.txHashes.resolve).toBe("mock-resolve-hash");
+  });
+
+  describe("Per-Role API Authentication (Issue #12)", () => {
+    it("POST /orders/:id/attest rejects request missing API credentials with 401", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const createRes = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestorAddress: attestorKeypair.publicKey(),
+          amountStroops: "10000000",
+          deadlineSeconds: deadline.toString(),
+        }),
+      });
+      const order = (await createRes.json()) as any;
+
+      const res = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+        method: "POST",
+      });
+      expect(res.status).toBe(401);
+      const data = (await res.json()) as { error: string };
+      expect(data.error).toContain("Missing API credential");
+    });
+
+    it("POST /orders/:id/attest rejects invalid API credentials with 401", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const createRes = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestorAddress: attestorKeypair.publicKey(),
+          amountStroops: "10000000",
+          deadlineSeconds: deadline.toString(),
+        }),
+      });
+      const order = (await createRes.json()) as any;
+
+      const res = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+        method: "POST",
+        headers: { Authorization: "Bearer bogus-invalid-token" },
+      });
+      expect(res.status).toBe(401);
+      const data = (await res.json()) as { error: string };
+      expect(data.error).toContain("Invalid API credential");
+    });
+
+    it("POST /orders/:id/claim rejects buyer credential with 403 Forbidden", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const createRes = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestorAddress: attestorKeypair.publicKey(),
+          amountStroops: "10000000",
+          deadlineSeconds: deadline.toString(),
+        }),
+      });
+      const order = (await createRes.json()) as any;
+
+      // Attest first using attestor credentials
+      await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.attestor}` },
+      });
+
+      // Try to claim with buyer token
+      const res = await fetch(`${baseUrl}/orders/${order.id}/claim`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${order.tokens.buyer}` },
+      });
+      expect(res.status).toBe(403);
+      const data = (await res.json()) as { error: string };
+      expect(data.error).toContain("Forbidden");
+    });
+
+    it("POST /orders/:id/reclaim accepts buyer order token and config buyer token", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const createRes = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestorAddress: attestorKeypair.publicKey(),
+          amountStroops: "10000000",
+          deadlineSeconds: deadline.toString(),
+        }),
+      });
+      const order = (await createRes.json()) as any;
+
+      // Set deadline in the past to allow reclaim
+      db.prepare("UPDATE orders SET deadline = ? WHERE id = ?").run(
+        Math.floor(Date.now() / 1000) - 100,
+        order.id,
+      );
+
+      const res = await fetch(`${baseUrl}/orders/${order.id}/reclaim`, {
+        method: "POST",
+        headers: { "x-api-key": order.tokens.buyer },
+      });
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as any;
+      expect(data.status).toBe("Reclaimed");
+    });
   });
 
   describe("Client-Side Wallet Signing Routes (?unsigned=true, /build-tx, /tx/submit)", () => {
@@ -452,9 +577,10 @@ describe("API Routes (routes.ts)", () => {
       expect(data.action).toBe("create");
       expect(data.order.id).toBeDefined();
       expect(data.order.status).toBe("Created");
+      expect(data.order.tokens).toBeDefined();
     });
 
-    it("POST /orders/:id/attest?unsigned=true returns unsigned attest XDR", async () => {
+    it("POST /orders/:id/attest?unsigned=true returns unsigned attest XDR with attestor auth", async () => {
       const deadline = Math.floor(Date.now() / 1000) + 3600;
       const createRes = await fetch(`${baseUrl}/orders`, {
         method: "POST",
@@ -470,6 +596,7 @@ describe("API Routes (routes.ts)", () => {
 
       const attestRes = await fetch(`${baseUrl}/orders/${order.id}/attest?unsigned=true`, {
         method: "POST",
+        headers: attestorAuth,
       });
       expect(attestRes.status).toBe(200);
       const data = (await attestRes.json()) as any;
@@ -478,7 +605,7 @@ describe("API Routes (routes.ts)", () => {
       expect(data.orderId).toBe(order.id);
     });
 
-    it("POST /orders/:id/build-tx builds unsigned XDR for requested action", async () => {
+    it("POST /orders/:id/build-tx builds unsigned XDR for requested action with role auth", async () => {
       const deadline = Math.floor(Date.now() / 1000) + 3600;
       const createRes = await fetch(`${baseUrl}/orders`, {
         method: "POST",
@@ -494,7 +621,7 @@ describe("API Routes (routes.ts)", () => {
 
       const buildRes = await fetch(`${baseUrl}/orders/${order.id}/build-tx`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...attestorAuth },
         body: JSON.stringify({ action: "attest" }),
       });
       expect(buildRes.status).toBe(200);
@@ -503,7 +630,7 @@ describe("API Routes (routes.ts)", () => {
       expect(data.action).toBe("attest");
     });
 
-    it("POST /tx/submit accepts signed XDR, submits, and updates order", async () => {
+    it("POST /tx/submit accepts signed XDR, submits, and updates order with role auth", async () => {
       const deadline = Math.floor(Date.now() / 1000) + 3600;
       const createRes = await fetch(`${baseUrl}/orders`, {
         method: "POST",
@@ -519,7 +646,7 @@ describe("API Routes (routes.ts)", () => {
 
       const submitRes = await fetch(`${baseUrl}/tx/submit`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...attestorAuth },
         body: JSON.stringify({
           signedXdr: "mock-signed-base64-xdr",
           orderId: order.id,
