@@ -185,6 +185,31 @@ covering the period between `Created` and `Attested`; `delivered/confirmed`
 maps to contract `Attested`; `claimed`/`deadline-passed`/`reclaimed` map
 directly to `Claimed`/`Reclaimed`.
 
+## Development, CI/CD & Project Hygiene
+
+To ensure high reliability, security, and supply-chain integrity, the repository employs automated quality gates and hygiene pipelines:
+
+1. **Continuous Integration Pipeline (`.github/workflows/ci.yml`)**:
+   - **Contract validation**: Verifies lockfile integrity via `cargo check --locked` and executes contract unit tests (`cargo test`) for `contracts/escrow`.
+   - **Backend quality gates**: Runs ESLint (`npm run lint`), Prettier checks (`npm run format:check`), TypeScript typechecks (`npm run typecheck`), and Vitest unit/integration tests with coverage reporting (`npm test`).
+   - **Dependency audit gate**: Audits all npm and cargo dependencies via `node scripts/audit-deps.mjs`.
+
+2. **Dependency Management & Dependabot**:
+   - Automated dependency update configurations live at [`.github/dependabot.yml`](.github/dependabot.yml).
+   - Configured with weekly check intervals for npm (`/backend`), cargo (`/`), and GitHub Actions (`/`), grouping ecosystem updates (e.g., `@stellar/*`, `soroban-*`, `express`) to minimize PR noise.
+
+3. **Dependency Audit Gate (`scripts/audit-deps.mjs`)**:
+   - A unified Node.js audit gate that inspects both `npm audit` and `cargo audit` results.
+   - Enforces security thresholds by failing CI only on high or critical severity advisories while treating low/medium vulnerabilities and network/offline reachability issues as non-blocking warnings.
+   - Verified through a dedicated regression test suite ([`scripts/test-audit-deps.mjs`](scripts/test-audit-deps.mjs)).
+
+4. **Security & Static Analysis**:
+   - **CodeQL (`.github/workflows/codeql.yml`)**: Analyzes both TypeScript backend code and Rust contracts for security vulnerabilities.
+   - **Gitleaks (`.github/workflows/gitleaks.yml`)**: Continuously scans commits and pull requests to prevent credentials, secrets, or testnet private keys from being committed.
+
+5. **Release Automation**:
+   - Automated semantic versioning and changelog updates are managed by Semantic Release ([`.releaserc.json`](.releaserc.json)) via [`.github/workflows/release.yml`](.github/workflows/release.yml).
+
 ## Phase boundaries
 
 Phase 1 (this repo, now): single hardcoded attestor per order, contract
