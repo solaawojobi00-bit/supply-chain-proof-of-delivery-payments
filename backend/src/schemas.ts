@@ -17,54 +17,99 @@ function isValidContractAddress(val: string): boolean {
   }
 }
 
-export const createOrderSchema = z.object({
-  sellerAddress: z
-    .string({ message: "sellerAddress is required" })
-    .min(1, { message: "sellerAddress is required" })
-    .refine(isValidStellarAddress, {
-      message: "sellerAddress must be a valid Stellar public key (G...)",
-    }),
+export const createOrderSchema = z
+  .object({
+    sellerAddress: z
+      .string({ message: "sellerAddress is required" })
+      .min(1, { message: "sellerAddress is required" })
+      .refine(isValidStellarAddress, {
+        message: "sellerAddress must be a valid Stellar public key (G...)",
+      }),
+    attestorAddress: z
+      .string()
+      .refine(isValidStellarAddress, {
+        message: "attestorAddress must be a valid Stellar public key (G...)",
+      })
+      .optional(),
+    attestors: z
+      .array(
+        z.string().refine(isValidStellarAddress, {
+          message: "each attestor in attestors must be a valid Stellar public key (G...)",
+        }),
+        { message: "attestors must be an array of Stellar public keys" },
+      )
+      .min(1, { message: "attestors array must contain at least one address" })
+      .optional(),
+    threshold: z
+      .number({ message: "threshold must be a number" })
+      .int({ message: "threshold must be an integer" })
+      .positive({ message: "threshold must be a positive integer" })
+      .optional(),
+    amountStroops: z
+      .string({ message: "amountStroops is required" })
+      .min(1, { message: "amountStroops is required" })
+      .regex(/^[1-9]\d*$/, {
+        message: "amountStroops must be a positive integer string",
+      }),
+    deadlineSeconds: z
+      .string({ message: "deadlineSeconds is required" })
+      .min(1, { message: "deadlineSeconds is required" })
+      .regex(/^[1-9]\d*$/, {
+        message: "deadlineSeconds must be a positive integer string",
+      })
+      .refine(
+        (val) => {
+          try {
+            const deadline = BigInt(val);
+            const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
+            return deadline > nowSeconds;
+          } catch {
+            return false;
+          }
+        },
+        {
+          message: "deadlineSeconds must be a timestamp in the future",
+        },
+      ),
+    tokenContractId: z
+      .string()
+      .refine(isValidContractAddress, {
+        message: "tokenContractId must be a valid Stellar contract address (C...)",
+      })
+      .optional(),
+  })
+  .refine(
+    (data) => Boolean(data.attestors && data.attestors.length > 0) || Boolean(data.attestorAddress),
+    {
+      message: "Either attestorAddress or non-empty attestors array is required",
+      path: ["attestors"],
+    },
+  )
+  .refine(
+    (data) => {
+      const list = data.attestors ?? (data.attestorAddress ? [data.attestorAddress] : []);
+      if (data.threshold !== undefined) {
+        return data.threshold >= 1 && data.threshold <= list.length;
+      }
+      return true;
+    },
+    {
+      message: "threshold must be between 1 and the number of designated attestors",
+      path: ["threshold"],
+    },
+  );
+
+export const attestOrderSchema = z.object({
   attestorAddress: z
-    .string({ message: "attestorAddress is required" })
-    .min(1, { message: "attestorAddress is required" })
+    .string()
     .refine(isValidStellarAddress, {
       message: "attestorAddress must be a valid Stellar public key (G...)",
-    }),
-  amountStroops: z
-    .string({ message: "amountStroops is required" })
-    .min(1, { message: "amountStroops is required" })
-    .regex(/^[1-9]\d*$/, {
-      message: "amountStroops must be a positive integer string",
-    }),
-  deadlineSeconds: z
-    .string({ message: "deadlineSeconds is required" })
-    .min(1, { message: "deadlineSeconds is required" })
-    .regex(/^[1-9]\d*$/, {
-      message: "deadlineSeconds must be a positive integer string",
-    })
-    .refine(
-      (val) => {
-        try {
-          const deadline = BigInt(val);
-          const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
-          return deadline > nowSeconds;
-        } catch {
-          return false;
-        }
-      },
-      {
-        message: "deadlineSeconds must be a timestamp in the future",
-      },
-    ),
-  tokenContractId: z
-    .string()
-    .refine(isValidContractAddress, {
-      message: "tokenContractId must be a valid Stellar contract address (C...)",
     })
     .optional(),
 });
 
 export type CreateOrderBody = z.infer<typeof createOrderSchema>;
+export type AttestOrderBody = z.infer<typeof attestOrderSchema>;
 
 export function formatZodError(error: z.ZodError): string {
   const issues = error.issues || (error as unknown as { errors?: z.ZodIssue[] }).errors || [];

@@ -107,7 +107,7 @@ paths:
   /orders/{id}/attest:
     post:
       summary: Attest proof of delivery
-      description: Attestor confirms delivery of the goods, unlocking the escrow for seller claim.
+      description: An authorized attestor confirms delivery of the goods. Transitions order to Attested once M-of-N threshold confirmations are met.
       operationId: attestOrder
       parameters:
         - name: id
@@ -117,15 +117,21 @@ paths:
           schema:
             type: string
             format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttestOrderRequest"
       responses:
         "200":
-          description: Order successfully attested
+          description: Order successfully attested or confirmation recorded
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Order"
         "400":
-          description: No local signer available for the attestor address
+          description: Invalid request or no local signer available for the attestor address
           content:
             application/json:
               schema:
@@ -137,7 +143,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: Order is not in Created state or deadline has already passed
+          description: Order is not in Created state, deadline has passed, or duplicate attestation
           content:
             application/json:
               schema:
@@ -196,7 +202,7 @@ paths:
 
   /orders/{id}/reclaim:
     post:
-      summary: Buyer reclaims escrowed funds
+      summary: Buyer reclaims escrowed funds after deadline
       description: Buyer reclaims funds if the delivery deadline has expired without attestation.
       operationId: reclaimOrder
       parameters:
@@ -284,7 +290,6 @@ components:
       type: object
       required:
         - sellerAddress
-        - attestorAddress
         - amountStroops
         - deadlineSeconds
       properties:
@@ -294,8 +299,20 @@ components:
           example: "GC5H3W256B3QW4A44GAK36XN763K2KRN7O2OESN553TUXW7R6AKN4V6E"
         attestorAddress:
           type: string
-          description: Stellar public address (G...) of the trusted attestor
+          description: Single Stellar public address (G...) of the attestor (legacy / convenience)
           example: "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"
+        attestors:
+          type: array
+          items:
+            type: string
+          description: Designated list of M-of-N Stellar public addresses authorized to confirm delivery
+          example:
+            - "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"
+            - "GB6NVEN5HSUBKMYCE5ZOWSK5RPO5RDTBWTJHQ35YKVGFFL3U2NOSVNQI"
+        threshold:
+          type: integer
+          description: Minimum number of distinct attestations required (1 <= threshold <= len(attestors))
+          example: 2
         amountStroops:
           type: string
           description: Amount in stroops (1 XLM = 10,000,000 stroops) as a string
@@ -308,6 +325,14 @@ components:
           type: string
           description: Optional Stellar contract address (C...) of the payment token; defaults to configured native XLM asset if omitted
           example: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+
+    AttestOrderRequest:
+      type: object
+      properties:
+        attestorAddress:
+          type: string
+          description: Specific Stellar public address (G...) of the attestor signing the confirmation
+          example: "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"
 
     OrderTxHashes:
       type: object
@@ -352,6 +377,9 @@ components:
         - buyerAddress
         - sellerAddress
         - attestorAddress
+        - attestors
+        - threshold
+        - confirmations
         - tokenContractId
         - amountStroops
         - deadline
@@ -379,8 +407,27 @@ components:
           example: "GC5H3W256B3QW4A44GAK36XN763K2KRN7O2OESN553TUXW7R6AKN4V6E"
         attestorAddress:
           type: string
-          description: Stellar public address (G...) of the attestor
+          description: Stellar public address (G...) of the primary/first attestor
           example: "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"
+        attestors:
+          type: array
+          items:
+            type: string
+          description: Authorized list of M-of-N attestor addresses
+          example:
+            - "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"
+            - "GB6NVEN5HSUBKMYCE5ZOWSK5RPO5RDTBWTJHQ35YKVGFFL3U2NOSVNQI"
+        threshold:
+          type: integer
+          description: Number of required confirmations for attestation
+          example: 2
+        confirmations:
+          type: array
+          items:
+            type: string
+          description: List of attestor addresses that have confirmed delivery
+          example:
+            - "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"
         tokenContractId:
           type: string
           description: Stellar contract address (C...) of the payment asset
@@ -426,7 +473,9 @@ components:
       type: object
       required:
         - seller
-        - attestor
+        - attestors
+        - threshold
+        - confirmations
         - amount
         - deadline
         - status
@@ -435,10 +484,23 @@ components:
           type: string
           description: Stellar address of the seller recorded on-chain
           example: "GC5H3W256B3QW4A44GAK36XN763K2KRN7O2OESN553TUXW7R6AKN4V6E"
-        attestor:
-          type: string
-          description: Stellar address of the attestor recorded on-chain
-          example: "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"
+        attestors:
+          type: array
+          items:
+            type: string
+          description: List of authorized attestor addresses recorded on-chain
+          example:
+            - "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"
+        threshold:
+          type: integer
+          description: Confirmation threshold recorded on-chain
+          example: 1
+        confirmations:
+          type: array
+          items:
+            type: string
+          description: List of confirmed attestor addresses recorded on-chain
+          example: []
         amount:
           type: string
           description: Escrowed amount in stroops

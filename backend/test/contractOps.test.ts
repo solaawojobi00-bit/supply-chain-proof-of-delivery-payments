@@ -97,7 +97,8 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
 
     const hash = await callCreate(contractId, buyerKeypair, {
       seller: sellerKeypair.publicKey(),
-      attestor: attestorKeypair.publicKey(),
+      attestors: [attestorKeypair.publicKey()],
+      threshold: 1,
       amount: 1000n,
       deadline: 123456n,
     });
@@ -123,6 +124,7 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
     const hash = await callAttest(contractId, attestorKeypair);
 
     expect(hash).toBe("tx-attest-hash");
+    expect(mockAttestMethod).toHaveBeenCalledWith({ attestor: attestorKeypair.publicKey() });
     const logged = consoleSpy.mock.calls.map((c) => JSON.parse(c[0]));
     const attestLog = logged.find((l) => l.type === "contract_call" && l.method === "attest");
     expect(attestLog).toBeDefined();
@@ -172,7 +174,9 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
         unwrap: () => ({
           buyer: buyerKeypair.publicKey(),
           seller: sellerKeypair.publicKey(),
-          attestor: attestorKeypair.publicKey(),
+          attestors: [attestorKeypair.publicKey()],
+          threshold: 1,
+          confirmations: [attestorKeypair.publicKey()],
           token: "mock-token",
           amount: 500n,
           deadline: 9999n,
@@ -185,6 +189,7 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
     const order = await readOnChainOrder(contractId);
     expect(order.status).toBe("Attested");
     expect(order.buyer).toBe(buyerKeypair.publicKey());
+    expect(order.attestors).toEqual([attestorKeypair.publicKey()]);
   });
 
   it("callRegistryCreateOrder logs and sends create_order transaction", async () => {
@@ -200,7 +205,8 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
     const hash = await callRegistryCreateOrder(contractId, buyerKeypair, {
       orderId: 101n,
       seller: sellerKeypair.publicKey(),
-      attestor: attestorKeypair.publicKey(),
+      attestors: [attestorKeypair.publicKey()],
+      threshold: 1,
       amount: 1000n,
       deadline: 123456n,
     });
@@ -226,6 +232,10 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
 
     const hash = await callRegistryAttest(contractId, attestorKeypair, 101n);
     expect(hash).toBe("tx-registry-attest-hash");
+    expect(mockAttest).toHaveBeenCalledWith({
+      order_id: 101n,
+      attestor: attestorKeypair.publicKey(),
+    });
     const logged = consoleSpy.mock.calls.map((c) => JSON.parse(c[0]));
     const regLog = logged.find((l) => l.type === "contract_call" && l.method === "registry_attest");
     expect(regLog).toBeDefined();
@@ -277,7 +287,9 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
           order_id: 101n,
           buyer: buyerKeypair.publicKey(),
           seller: sellerKeypair.publicKey(),
-          attestor: attestorKeypair.publicKey(),
+          attestors: [attestorKeypair.publicKey()],
+          threshold: 1,
+          confirmations: [],
           token: "mock-token",
           amount: 500n,
           deadline: 9999n,
@@ -290,5 +302,6 @@ describe("Contract Operations with Logging (contractOps.ts)", () => {
     const order = await readOnChainRegistryOrder(contractId, 101n);
     expect(order.status).toBe("Created");
     expect(order.buyer).toBe(buyerKeypair.publicKey());
+    expect(order.attestors).toEqual([attestorKeypair.publicKey()]);
   });
 });

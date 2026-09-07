@@ -57,7 +57,7 @@ Phase 1 delivers a genuinely working, end-to-end flow on Stellar testnet:
    its Stellar public key at order-creation time) submits a signed
    confirmation transaction once it has independently verified delivery
    (e.g. courier scan, warehouse receipt). The service does not try to
-   automatically detect delivery in Phase 1 — the attestor's signature *is*
+   automatically detect delivery in Phase 1 — the attestor's signature _is_
    the confirmation.
 4. **Claim**: once attested, the seller can claim the escrowed funds.
 5. **Reclaim**: if the deadline passes with no attestation, the buyer can

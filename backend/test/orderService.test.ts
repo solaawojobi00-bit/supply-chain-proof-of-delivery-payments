@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { Keypair } from "@stellar/stellar-sdk";
 import { attestorKeypair, buyerKeypair, sellerKeypair } from "../src/keys.js";
 
 vi.mock("../src/contractOps.js", () => ({
@@ -149,15 +150,41 @@ describe("Order Service Unit & Integration (orderService.ts)", () => {
     expect(reclaimed.reclaim_tx_hash).toBe("mock-reclaim-tx-hash");
   });
 
-  it("rejects reclaim if deadline has not passed yet", async () => {
-    const futureDeadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+  it("supports M-of-N multi-attestor confirmation and status transition", async () => {
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+    // Use buyerKeypair as a second authorized signer for testing
+    const attestors = [attestorKeypair.publicKey(), buyerKeypair.publicKey()];
     const created = await createOrder({
       sellerAddress: sellerKeypair.publicKey(),
-      attestorAddress: attestorKeypair.publicKey(),
+      attestors,
+      threshold: 2,
       amountStroops: 10000000n,
-      deadlineSeconds: futureDeadline,
+      deadlineSeconds: deadline,
     });
 
-    await expect(reclaimOrder(created.id)).rejects.toThrowError(/Deadline has not passed yet/);
+    expect(created.status).toBe("Created");
+    expect(created.threshold).toBe(2);
+
+    // 1st confirmation (by primary attestor) -> order remains Created but confirmation recorded
+    const partial = await attestOrder(created.id, attestorKeypair.publicKey());
+    expect(partial.status).toBe("Created");
+    expect(JSON.parse(partial.confirmations ?? "[]")).toContain(attestorKeypair.publicKey());
+
+    // Duplicate confirmation by the same attestor is rejected
+    await expect(attestOrder(created.id, attestorKeypair.publicKey())).rejects.toThrowError(
+      /already confirmed/,
+    );
+
+    // Unauthorized attestor is rejected
+    const unauthorized = Keypair.random();
+    await expect(attestOrder(created.id, unauthorized.publicKey())).rejects.toThrowError(
+      /not authorized/,
+    );
+
+    // 2nd confirmation (by second attestor) -> reaches threshold (2), transitions to Attested
+    const fullyAttested = await attestOrder(created.id, buyerKeypair.publicKey());
+    expect(fullyAttested.status).toBe("Attested");
+    const confs = JSON.parse(fullyAttested.confirmations ?? "[]");
+    expect(confs).toHaveLength(2);
   });
 });

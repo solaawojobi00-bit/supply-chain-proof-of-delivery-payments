@@ -15,13 +15,22 @@ import {
   readOnChainRegistryOrder,
 } from "./contractOps.js";
 import { config } from "./config.js";
-import { getOrder, insertOrder, listOrders, updateOrderStatus, type OrderRow } from "./db.js";
+import {
+  getOrder,
+  insertOrder,
+  listOrders,
+  updateOrderAttestation,
+  updateOrderStatus,
+  type OrderRow,
+} from "./db.js";
 import { HttpError } from "./httpError.js";
 import { buyerKeypair, findLocalSigner } from "./keys.js";
 
 export interface CreateOrderInput {
   sellerAddress: string;
-  attestorAddress: string;
+  attestorAddress?: string;
+  attestors?: string[];
+  threshold?: number;
   amountStroops: bigint;
   deadlineSeconds: bigint;
   tokenContractId?: string;
@@ -59,6 +68,10 @@ export async function createOrder(
 ): Promise<OrderRow> {
   const numericId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
   const paymentToken = input.tokenContractId ?? config.paymentTokenContractId;
+  const attestors =
+    input.attestors && input.attestors.length > 0 ? input.attestors : [input.attestorAddress!];
+  const threshold = input.threshold ?? 1;
+  const primaryAttestor = attestors[0];
   let contractId: string;
   let createTxHash: string | undefined;
 
@@ -67,7 +80,8 @@ export async function createOrder(
     createTxHash = await callRegistryCreateOrder(contractId, buyerKeypair, {
       orderId: BigInt(numericId),
       seller: input.sellerAddress,
-      attestor: input.attestorAddress,
+      attestors,
+      threshold,
       token: paymentToken,
       amount: input.amountStroops,
       deadline: input.deadlineSeconds,
@@ -77,7 +91,8 @@ export async function createOrder(
     contractId = deployed.contractId;
     createTxHash = await callCreate(contractId, buyerKeypair, {
       seller: input.sellerAddress,
-      attestor: input.attestorAddress,
+      attestors,
+      threshold,
       token: paymentToken,
       amount: input.amountStroops,
       deadline: input.deadlineSeconds,
@@ -90,7 +105,10 @@ export async function createOrder(
     numeric_id: numericId,
     buyer_address: buyerKeypair.publicKey(),
     seller_address: input.sellerAddress,
-    attestor_address: input.attestorAddress,
+    attestor_address: primaryAttestor,
+    attestors: JSON.stringify(attestors),
+    threshold,
+    confirmations: JSON.stringify([]),
     token_contract_id: paymentToken,
     amount: input.amountStroops.toString(),
     deadline: Number(input.deadlineSeconds),
@@ -124,7 +142,7 @@ export async function getOrderWithChainState(id: string) {
   return { order, onChain, lifecycle: lifecycleLabel(order) };
 }
 
-export async function attestOrder(id: string): Promise<OrderRow> {
+export async function attestOrder(id: string, attestorAddress?: string): Promise<OrderRow> {
   const order = requireOrder(id);
   if (order.status !== "Created") {
     throw new HttpError(409, `Order is ${order.status}; can only attest an order that is Created`);
@@ -135,18 +153,60 @@ export async function attestOrder(id: string): Promise<OrderRow> {
       "Deadline has already passed; this order can only be reclaimed by the buyer now",
     );
   }
-  const signer = findLocalSigner(order.attestor_address);
+
+  const designatedAttestors: string[] = order.attestors
+    ? JSON.parse(order.attestors)
+    : [order.attestor_address];
+  const confirmations: string[] = order.confirmations ? JSON.parse(order.confirmations) : [];
+
+  let targetAttestor: string | undefined;
+  if (attestorAddress) {
+    if (!designatedAttestors.includes(attestorAddress)) {
+      throw new HttpError(400, "Attestor address is not authorized for this order");
+    }
+    if (confirmations.includes(attestorAddress)) {
+      throw new HttpError(409, "This attestor has already confirmed delivery for this order");
+    }
+    targetAttestor = attestorAddress;
+  } else {
+    targetAttestor = designatedAttestors.find(
+      (a) => !confirmations.includes(a) && Boolean(findLocalSigner(a)),
+    );
+    if (!targetAttestor) {
+      if (designatedAttestors.every((a) => confirmations.includes(a))) {
+        throw new HttpError(409, "All authorized attestors have already confirmed delivery");
+      }
+      if (designatedAttestors.length === 1) {
+        throw new HttpError(
+          400,
+          "No local signer for this attestor address. Phase 1 backend can only sign for its configured demo keypairs (see ARCHITECTURE.md); client-side wallet signing is Phase 2+.",
+        );
+      }
+      throw new HttpError(
+        400,
+        "No local signer found for unconfirmed authorized attestors on this order.",
+      );
+    }
+  }
+
+  const signer = findLocalSigner(targetAttestor);
   if (!signer) {
     throw new HttpError(
       400,
-      "No local signer for this attestor address. Phase 1 backend can only sign for its configured demo keypairs (see ARCHITECTURE.md); client-side wallet signing is Phase 2+.",
+      `No local signer for attestor ${targetAttestor}. Phase 1 backend can only sign for its configured demo keypairs (see ARCHITECTURE.md); client-side wallet signing is Phase 2+.`,
     );
   }
+
   const txHash =
     order.numeric_id != null && order.contract_id === config.escrowRegistryContractId
       ? await callRegistryAttest(order.contract_id, signer, BigInt(order.numeric_id))
       : await callAttest(order.contract_id, signer);
-  updateOrderStatus(id, "Attested", "attest_tx_hash", txHash ?? "");
+
+  const nextConfirmations = [...confirmations, signer.publicKey()];
+  const requiredThreshold = order.threshold ?? 1;
+  const nextStatus = nextConfirmations.length >= requiredThreshold ? "Attested" : "Created";
+
+  updateOrderAttestation(id, nextStatus, nextConfirmations, txHash ?? "");
   return requireOrder(id);
 }
 

@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, token, Address, Env};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, token, Address, Env, Vec};
 
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -18,7 +18,9 @@ pub struct Order {
     pub order_id: u64,
     pub buyer: Address,
     pub seller: Address,
-    pub attestor: Address,
+    pub attestors: Vec<Address>,
+    pub threshold: u32,
+    pub confirmations: Vec<Address>,
     pub token: Address,
     pub amount: i128,
     pub deadline: u64,
@@ -42,6 +44,10 @@ pub enum Error {
     WrongStatus = 5,
     DeadlineNotYetPassed = 6,
     DeadlinePassed = 7,
+    ThresholdNotPositive = 8,
+    ThresholdExceedsAttestors = 9,
+    AttestorNotAuthorized = 10,
+    AlreadyConfirmed = 11,
 }
 
 const LEDGERS_PER_DAY: u32 = 17280; // ~5s ledger close time
@@ -61,7 +67,8 @@ impl EscrowRegistryContract {
         order_id: u64,
         buyer: Address,
         seller: Address,
-        attestor: Address,
+        attestors: Vec<Address>,
+        threshold: u32,
         token: Address,
         amount: i128,
         deadline: u64,
@@ -76,6 +83,12 @@ impl EscrowRegistryContract {
         if deadline <= env.ledger().timestamp() {
             return Err(Error::DeadlineNotInFuture);
         }
+        if threshold == 0 {
+            return Err(Error::ThresholdNotPositive);
+        }
+        if threshold > attestors.len() {
+            return Err(Error::ThresholdExceedsAttestors);
+        }
 
         buyer.require_auth();
 
@@ -86,7 +99,9 @@ impl EscrowRegistryContract {
             order_id,
             buyer,
             seller,
-            attestor,
+            attestors,
+            threshold,
+            confirmations: Vec::new(&env),
             token,
             amount,
             deadline,
@@ -101,8 +116,9 @@ impl EscrowRegistryContract {
         Ok(())
     }
 
-    /// Attest delivery for a given `order_id`. Must be signed by the designated attestor before the deadline.
-    pub fn attest(env: Env, order_id: u64) -> Result<(), Error> {
+    /// An authorized attestor confirms delivery for a given `order_id`. Must be signed before the deadline.
+    /// Transitions status to `Attested` once `threshold` distinct confirmations are reached.
+    pub fn attest(env: Env, order_id: u64, attestor: Address) -> Result<(), Error> {
         let key = DataKey::Order(order_id);
         let mut order = Self::load(&env, order_id)?;
 
@@ -112,10 +128,21 @@ impl EscrowRegistryContract {
         if env.ledger().timestamp() >= order.deadline {
             return Err(Error::DeadlinePassed);
         }
+        if !order.attestors.contains(&attestor) {
+            return Err(Error::AttestorNotAuthorized);
+        }
+        if order.confirmations.contains(&attestor) {
+            return Err(Error::AlreadyConfirmed);
+        }
 
-        order.attestor.require_auth();
+        attestor.require_auth();
 
-        order.status = OrderStatus::Attested;
+        order.confirmations.push_back(attestor);
+
+        if order.confirmations.len() >= order.threshold {
+            order.status = OrderStatus::Attested;
+        }
+
         env.storage().persistent().set(&key, &order);
         env.storage()
             .persistent()

@@ -28,7 +28,9 @@ vi.mock("../src/contractOps.js", () => {
     readOnChainOrder: vi.fn(async (contractId: string) => ({
       buyer: buyerKeypair.publicKey(),
       seller: sellerKeypair.publicKey(),
-      attestor: attestorKeypair.publicKey(),
+      attestors: [attestorKeypair.publicKey()],
+      threshold: 1,
+      confirmations: [],
       token: "CDUMMYTOKENCONTRACTID00000000000000000000000000000000000000",
       amount: 100000000n,
       deadline: 9999999999n,
@@ -645,6 +647,71 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       const claimed = (await claimRes.json()) as { tokenContractId: string; status: string };
       expect(claimed.tokenContractId).toBe(customToken);
       expect(claimed.status).toBe("Claimed");
+    });
+
+    it("Multi-attestor M-of-N: requires threshold confirmations before allowing claim", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const attestors = [attestorKeypair.publicKey(), buyerKeypair.publicKey()];
+
+      // 1. Create order with 2 attestors, threshold 2
+      const createRes = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestors,
+          threshold: 2,
+          amountStroops: "50000000",
+          deadlineSeconds: String(deadline),
+        }),
+      });
+      expect(createRes.status).toBe(201);
+      const order = (await createRes.json()) as {
+        id: string;
+        status: string;
+        threshold: number;
+        confirmations: string[];
+      };
+      expect(order.threshold).toBe(2);
+      expect(order.status).toBe("Created");
+
+      // 2. Attempt claim before any attestation -> 409
+      const earlyClaim = await fetch(`${baseUrl}/orders/${order.id}/claim`, { method: "POST" });
+      expect(earlyClaim.status).toBe(409);
+
+      // 3. First attestor confirms -> status remains Created, 1 confirmation recorded
+      const attest1 = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ attestorAddress: attestorKeypair.publicKey() }),
+      });
+      expect(attest1.status).toBe(200);
+      const partialOrder = (await attest1.json()) as { status: string; confirmations: string[] };
+      expect(partialOrder.status).toBe("Created");
+      expect(partialOrder.confirmations).toHaveLength(1);
+
+      // 4. Attempt claim after 1 of 2 confirmations -> 409
+      const stillEarlyClaim = await fetch(`${baseUrl}/orders/${order.id}/claim`, {
+        method: "POST",
+      });
+      expect(stillEarlyClaim.status).toBe(409);
+
+      // 5. Second attestor confirms -> threshold (2) reached, transitions to Attested
+      const attest2 = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ attestorAddress: buyerKeypair.publicKey() }),
+      });
+      expect(attest2.status).toBe(200);
+      const fullOrder = (await attest2.json()) as { status: string; confirmations: string[] };
+      expect(fullOrder.status).toBe("Attested");
+      expect(fullOrder.confirmations).toHaveLength(2);
+
+      // 6. Seller can now claim
+      const finalClaim = await fetch(`${baseUrl}/orders/${order.id}/claim`, { method: "POST" });
+      expect(finalClaim.status).toBe(200);
+      const finalOrder = (await finalClaim.json()) as { status: string };
+      expect(finalOrder.status).toBe("Claimed");
     });
   });
 });

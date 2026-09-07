@@ -12,9 +12,9 @@ over exactly two primitive conditions: `BEFORE_ABSOLUTE_TIME` and
 `BEFORE_RELATIVE_TIME`, plus `UNCONDITIONAL`. That's the entire predicate
 language — there is no predicate that means "claimable once a specific third
 party has submitted a signature." Claimable Balances are a perfect fit for
-the buyer's *reclaim-after-deadline* path in isolation (`claimant = buyer,
+the buyer's _reclaim-after-deadline_ path in isolation (`claimant = buyer,
 predicate = not(before_absolute_time(deadline))`), but they cannot express
-the seller's *claim-only-after-attestor-confirms* path, because that
+the seller's _claim-only-after-attestor-confirms_ path, because that
 condition depends on an event (the attestor's signed confirmation) that
 doesn't exist yet at balance-creation time and isn't a timestamp. Once a
 Claimable Balance is created, its claimants and predicates are immutable —
@@ -41,6 +41,7 @@ attestation requirement forces the more expressive tool.
 ## Contract design (`contracts/escrow` and `contracts/escrow-registry`)
 
 The repository supports two contract topologies:
+
 1. **Per-Order Escrow Instance (`contracts/escrow`)**: Each order is its own deployed WASM contract instance.
 2. **Shared Escrow Registry (`contracts/escrow-registry`)**: A single deployed registry instance manages multiple orders identified by unique `order_id`s in persistent storage.
 
@@ -52,23 +53,26 @@ State:
 pub struct Order {
     pub buyer: Address,
     pub seller: Address,
-    pub attestor: Address,
-    pub token: Address,      // Stellar Asset Contract address (XLM on testnet)
+    pub attestors: Vec<Address>,
+    pub threshold: u32,
+    pub confirmations: Vec<Address>,
+    pub token: Address,      // Stellar Asset Contract address (XLM or custom SAC)
     pub amount: i128,
     pub deadline: u64,       // unix timestamp
-    pub status: OrderStatus, // Created | Attested | Claimed | Reclaimed
+    pub status: OrderStatus, // Created | Attested | Claimed | Reclaimed | Cancelled
 }
 ```
 
 Methods:
 
-| Method | Caller | Precondition | Effect |
-|---|---|---|---|
-| `create(buyer, seller, attestor, token, amount, deadline)` | buyer | none (init) | `require_auth(buyer)`; pulls `amount` of `token` from buyer into the contract via the token's `transfer`; stores `Order`, `status = Created` |
-| `attest()` | attestor | `status == Created`, `now < deadline` | `require_auth(attestor)`; `status = Attested` |
-| `claim()` | seller | `status == Attested` | `require_auth(seller)`; transfers `amount` of `token` to seller; `status = Claimed` |
-| `reclaim()` | buyer | `status == Created`, `now >= deadline` | `require_auth(buyer)`; transfers `amount` of `token` back to buyer; `status = Reclaimed` |
-| `get_order()` | anyone | — | read-only state view |
+| Method                                                                 | Caller              | Precondition                                       | Effect                                                                                                                                       |
+| ---------------------------------------------------------------------- | ------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create(buyer, seller, attestors, threshold, token, amount, deadline)` | buyer               | none (init)                                        | `require_auth(buyer)`; pulls `amount` of `token` from buyer into the contract via the token's `transfer`; stores `Order`, `status = Created` |
+| `attest(attestor)`                                                     | authorized attestor | `status == Created`, `now < deadline`, unconfirmed | `require_auth(attestor)`; adds to `confirmations`; transitions `status = Attested` once `confirmations.len() >= threshold`                   |
+| `claim()`                                                              | seller              | `status == Attested`                               | `require_auth(seller)`; transfers `amount` of `token` to seller; `status = Claimed`                                                          |
+| `reclaim()`                                                            | buyer               | `status == Created`, `now >= deadline`             | `require_auth(buyer)`; transfers `amount` of `token` back to buyer; `status = Reclaimed`                                                     |
+| `cancel()`                                                             | buyer & seller      | `status == Created`                                | `require_auth(buyer)` & `require_auth(seller)`; transfers `amount` of `token` back to buyer; `status = Cancelled`                            |
+| `get_order()`                                                          | anyone              | —                                                  | read-only state view                                                                                                                         |
 
 ### 2. Shared Escrow Registry (`contracts/escrow-registry`)
 
@@ -79,7 +83,9 @@ pub struct Order {
     pub order_id: u64,
     pub buyer: Address,
     pub seller: Address,
-    pub attestor: Address,
+    pub attestors: Vec<Address>,
+    pub threshold: u32,
+    pub confirmations: Vec<Address>,
     pub token: Address,
     pub amount: i128,
     pub deadline: u64,
@@ -89,22 +95,23 @@ pub struct Order {
 
 Methods:
 
-| Method | Caller | Precondition | Effect |
-|---|---|---|---|
-| `create_order(order_id, buyer, seller, attestor, token, amount, deadline)` | buyer | `order_id` not exists | `require_auth(buyer)`; transfers `amount` into registry contract; stores `DataKey::Order(order_id)` with status `Created` |
-| `attest(order_id)` | attestor | `status == Created`, `now < deadline` | `require_auth(attestor)`; updates order status to `Attested` |
-| `claim(order_id)` | seller | `status == Attested` | `require_auth(seller)`; transfers funds to seller; updates status to `Claimed` |
-| `reclaim(order_id)` | buyer | `status == Created`, `now >= deadline` | `require_auth(buyer)`; refunds funds to buyer; updates status to `Reclaimed` |
-| `get_order(order_id)` | anyone | `order_id` exists | Returns `Order` state |
+| Method                                                                                 | Caller              | Precondition                                       | Effect                                                                                                                    |
+| -------------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `create_order(order_id, buyer, seller, attestors, threshold, token, amount, deadline)` | buyer               | `order_id` not exists                              | `require_auth(buyer)`; transfers `amount` into registry contract; stores `DataKey::Order(order_id)` with status `Created` |
+| `attest(order_id, attestor)`                                                           | authorized attestor | `status == Created`, `now < deadline`, unconfirmed | `require_auth(attestor)`; adds to `confirmations`; updates order status to `Attested` once threshold is met               |
+| `claim(order_id)`                                                                      | seller              | `status == Attested`                               | `require_auth(seller)`; transfers funds to seller; updates status to `Claimed`                                            |
+| `reclaim(order_id)`                                                                    | buyer               | `status == Created`, `now >= deadline`             | `require_auth(buyer)`; refunds funds to buyer; updates status to `Reclaimed`                                              |
+| `cancel(order_id)`                                                                     | buyer & seller      | `status == Created`                                | `require_auth(buyer)` & `require_auth(seller)`; refunds funds to buyer; updates status to `Cancelled`                     |
+| `get_order(order_id)`                                                                  | anyone              | `order_id` exists                                  | Returns `Order` state                                                                                                     |
 
 ### Migration Note & Architectural Trade-offs
 
 - **Per-Order Deployment (`contracts/escrow`)**:
-  - *Pros*: Extreme isolation; contract storage automatically bounds to single order lifecycle.
-  - *Cons*: High deployment fees and latency on every order creation (`ContractClient.deploy`).
+  - _Pros_: Extreme isolation; contract storage automatically bounds to single order lifecycle.
+  - _Cons_: High deployment fees and latency on every order creation (`ContractClient.deploy`).
 - **Shared Registry (`contracts/escrow-registry`)**:
-  - *Pros*: Zero per-order deployment cost; orders are created via standard contract invocations (`create_order`); faster throughput.
-  - *Cons & Tradeoffs*: Persistent storage expands linearly with order volume. Each entry utilizes Soroban persistent storage with explicit TTL extensions (`extend_ttl`). For production scale, an archival/eviction policy or storage rent fee reclaim mechanism after finalization (`Claimed`/`Reclaimed`) is required to manage long-term state footprint.
+  - _Pros_: Zero per-order deployment cost; orders are created via standard contract invocations (`create_order`); faster throughput.
+  - _Cons & Tradeoffs_: Persistent storage expands linearly with order volume. Each entry utilizes Soroban persistent storage with explicit TTL extensions (`extend_ttl`). For production scale, an archival/eviction policy or storage rent fee reclaim mechanism after finalization (`Claimed`/`Reclaimed`) is required to manage long-term state footprint.
 
 Funds custody: both contracts call the token contract's `transfer` to pull
 funds from the buyer into the contract instance in `create`/`create_order`, and to push funds out in
@@ -114,6 +121,7 @@ needing a custom fungible token.
 
 Every state-changing method enforces its precondition and calls
 `require_auth` for the relevant party, so:
+
 - the buyer cannot claim (only `claim()`, called by seller, releases to
   seller)
 - the seller cannot reclaim or self-attest (only the `attestor` key
@@ -131,7 +139,7 @@ not a convention the backend has to uphold.
 
 In Phase 1 the attestor is a single Stellar keypair, chosen and shared with
 the backend at order-creation time (e.g. a courier or warehouse operator's
-existing signing key). "Delivery confirmed" *is* "the attestor submitted a
+existing signing key). "Delivery confirmed" _is_ "the attestor submitted a
 signed `attest()` invocation" — there is no separate off-chain confirmation
 step the backend trusts; the chain transaction is the source of truth. The
 backend's job is only to hold the attestor's testnet keypair on their behalf
@@ -168,13 +176,13 @@ wallet; this is tracked as a Phase 2+ issue.
 
 ### API surface (Phase 1)
 
-| Endpoint | Effect |
-|---|---|
-| `POST /orders` | Create order: deploys contract, calls `create()`, persists order row. Body: `sellerAddress, attestorAddress, amount, deadlineSeconds` |
-| `GET /orders/:id` | Return current order status and details |
-| `POST /orders/:id/attest` | Attestor confirms delivery: calls `attest()` |
-| `POST /orders/:id/claim` | Seller claims funds: calls `claim()` |
-| `POST /orders/:id/reclaim` | Buyer reclaims funds: calls `reclaim()` (only succeeds past deadline) |
+| Endpoint                   | Effect                                                                                                                                |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /orders`             | Create order: deploys contract, calls `create()`, persists order row. Body: `sellerAddress, attestorAddress, amount, deadlineSeconds` |
+| `GET /orders/:id`          | Return current order status and details                                                                                               |
+| `POST /orders/:id/attest`  | Attestor confirms delivery: calls `attest()`                                                                                          |
+| `POST /orders/:id/claim`   | Seller claims funds: calls `claim()`                                                                                                  |
+| `POST /orders/:id/reclaim` | Buyer reclaims funds: calls `reclaim()` (only succeeds past deadline)                                                                 |
 
 ## Data flow: full order lifecycle
 

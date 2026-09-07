@@ -12,6 +12,9 @@ export interface OrderRow {
   buyer_address: string;
   seller_address: string;
   attestor_address: string;
+  attestors?: string | null;
+  threshold?: number | null;
+  confirmations?: string | null;
   token_contract_id: string;
   amount: string;
   deadline: number;
@@ -38,6 +41,9 @@ db.exec(`
     buyer_address TEXT NOT NULL,
     seller_address TEXT NOT NULL,
     attestor_address TEXT NOT NULL,
+    attestors TEXT,
+    threshold INTEGER DEFAULT 1,
+    confirmations TEXT DEFAULT '[]',
     token_contract_id TEXT NOT NULL,
     amount TEXT NOT NULL,
     deadline INTEGER NOT NULL,
@@ -77,15 +83,35 @@ try {
   // column already exists
 }
 
+try {
+  db.exec(`ALTER TABLE orders ADD COLUMN attestors TEXT`);
+} catch {
+  // column already exists
+}
+
+try {
+  db.exec(`ALTER TABLE orders ADD COLUMN threshold INTEGER DEFAULT 1`);
+} catch {
+  // column already exists
+}
+
+try {
+  db.exec(`ALTER TABLE orders ADD COLUMN confirmations TEXT DEFAULT '[]'`);
+} catch {
+  // column already exists
+}
+
 export function insertOrder(row: OrderRow): void {
   db.prepare(
     `INSERT INTO orders (
       id, contract_id, numeric_id, buyer_address, seller_address, attestor_address,
+      attestors, threshold, confirmations,
       token_contract_id, amount, deadline, status,
       create_tx_hash, attest_tx_hash, claim_tx_hash, reclaim_tx_hash, cancel_tx_hash,
       idempotency_key, request_payload, created_at
     ) VALUES (
       @id, @contract_id, @numeric_id, @buyer_address, @seller_address, @attestor_address,
+      @attestors, @threshold, @confirmations,
       @token_contract_id, @amount, @deadline, @status,
       @create_tx_hash, @attest_tx_hash, @claim_tx_hash, @reclaim_tx_hash, @cancel_tx_hash,
       @idempotency_key, @request_payload, @created_at
@@ -93,6 +119,9 @@ export function insertOrder(row: OrderRow): void {
   ).run({
     ...row,
     numeric_id: row.numeric_id ?? null,
+    attestors: row.attestors ?? null,
+    threshold: row.threshold ?? 1,
+    confirmations: row.confirmations ?? "[]",
     cancel_tx_hash: row.cancel_tx_hash ?? null,
     idempotency_key: row.idempotency_key ?? null,
     request_payload: row.request_payload ?? null,
@@ -123,4 +152,15 @@ export function updateOrderStatus(
     txHash,
     id,
   );
+}
+
+export function updateOrderAttestation(
+  id: string,
+  status: OrderStatus,
+  confirmations: string[],
+  attestTxHash: string,
+): void {
+  db.prepare(
+    `UPDATE orders SET status = ?, confirmations = ?, attest_tx_hash = ? WHERE id = ?`,
+  ).run(status, JSON.stringify(confirmations), attestTxHash, id);
 }

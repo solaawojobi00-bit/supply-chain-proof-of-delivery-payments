@@ -11,7 +11,7 @@ import {
   reclaimOrder,
 } from "./orderService.js";
 import { getOrderByIdempotencyKey, type OrderRow } from "./db.js";
-import { createOrderSchema, formatZodError } from "./schemas.js";
+import { attestOrderSchema, createOrderSchema, formatZodError } from "./schemas.js";
 
 export const router = Router();
 
@@ -20,12 +20,20 @@ router.get("/health", (_req: Request, res: Response) => {
 });
 
 function serialize(order: OrderRow) {
+  const attestors: string[] = order.attestors
+    ? JSON.parse(order.attestors)
+    : [order.attestor_address];
+  const confirmations: string[] = order.confirmations ? JSON.parse(order.confirmations) : [];
+
   return {
     id: order.id,
     contractId: order.contract_id,
     buyerAddress: order.buyer_address,
     sellerAddress: order.seller_address,
     attestorAddress: order.attestor_address,
+    attestors,
+    threshold: order.threshold ?? 1,
+    confirmations,
     tokenContractId: order.token_contract_id,
     amountStroops: order.amount,
     deadline: order.deadline,
@@ -59,11 +67,20 @@ router.post(
     if (!parseResult.success) {
       throw new HttpError(400, formatZodError(parseResult.error));
     }
-    const { sellerAddress, attestorAddress, amountStroops, deadlineSeconds, tokenContractId } =
-      parseResult.data;
+    const {
+      sellerAddress,
+      attestorAddress,
+      attestors,
+      threshold,
+      amountStroops,
+      deadlineSeconds,
+      tokenContractId,
+    } = parseResult.data;
     const normalizedPayload = JSON.stringify({
       sellerAddress,
       attestorAddress,
+      attestors,
+      threshold,
       amountStroops,
       deadlineSeconds,
       tokenContractId,
@@ -87,6 +104,8 @@ router.post(
       {
         sellerAddress,
         attestorAddress,
+        attestors,
+        threshold,
         amountStroops: BigInt(amountStroops),
         deadlineSeconds: BigInt(deadlineSeconds),
         tokenContractId,
@@ -124,7 +143,15 @@ router.get(
 router.post(
   "/orders/:id/attest",
   asyncHandler(async (req, res) => {
-    res.json(serialize(await attestOrder(String(req.params.id))));
+    let attestorAddress: string | undefined;
+    if (req.body && Object.keys(req.body).length > 0) {
+      const parseResult = attestOrderSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        throw new HttpError(400, formatZodError(parseResult.error));
+      }
+      attestorAddress = parseResult.data.attestorAddress;
+    }
+    res.json(serialize(await attestOrder(String(req.params.id), attestorAddress)));
   }),
 );
 
