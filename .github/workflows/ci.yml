@@ -42,8 +42,14 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefix backend
 
+      - name: Run linter
+        run: npm run lint --prefix backend
+
+      - name: Check code formatting
+        run: npm run format:check --prefix backend
+
       - name: Run typecheck
         run: npm run typecheck --prefix backend
 
-      - name: Run smoke tests
+      - name: Run unit and integration tests with coverage
         run: npm test --prefix backend

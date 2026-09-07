@@ -50,6 +50,9 @@ describe("Order Service Unit & Integration (orderService.ts)", () => {
 
     const fetched = getOrderById(order.id);
     expect(fetched.id).toBe(order.id);
+
+    const all = getAllOrders();
+    expect(all.some((o) => o.id === order.id)).toBe(true);
   });
 
   it("throws 404 when querying nonexistent order", () => {
@@ -129,9 +132,7 @@ describe("Order Service Unit & Integration (orderService.ts)", () => {
       deadlineSeconds: expiredDeadline,
     });
 
-    await expect(attestOrder(created.id)).rejects.toThrowError(
-      /Deadline has already passed/,
-    );
+    await expect(attestOrder(created.id)).rejects.toThrowError(/Deadline has already passed/);
   });
 
   it("supports buyer reclaim after deadline has expired on unattested order", async () => {
@@ -157,8 +158,6 @@ describe("Order Service Unit & Integration (orderService.ts)", () => {
       deadlineSeconds: futureDeadline,
     });
 
-    await expect(reclaimOrder(created.id)).rejects.toThrowError(
-      /Deadline has not passed yet/,
-    );
+    await expect(reclaimOrder(created.id)).rejects.toThrowError(/Deadline has not passed yet/);
   });
 });

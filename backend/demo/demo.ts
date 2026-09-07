@@ -82,14 +82,18 @@ async function runReclaimPath() {
   assertStatus(order, "Created");
 
   const waitMs = deadlineSeconds * 1000 - Date.now() + 3000;
-  console.log(`\nWaiting ${Math.ceil(waitMs / 1000)}s for the deadline to pass without attestation...`);
+  console.log(
+    `\nWaiting ${Math.ceil(waitMs / 1000)}s for the deadline to pass without attestation...`,
+  );
   await sleep(Math.max(waitMs, 0));
 
   const reclaimed = await api("POST", `/orders/${order.id}/reclaim`);
   log("2. Buyer reclaimed the funds after the deadline passed", reclaimed);
   assertStatus(reclaimed, "Reclaimed");
 
-  console.log("\nReclaim path complete: funds moved buyer -> escrow -> back to buyer on Stellar testnet.");
+  console.log(
+    "\nReclaim path complete: funds moved buyer -> escrow -> back to buyer on Stellar testnet.",
+  );
 }
 
 const mode = process.argv[2];

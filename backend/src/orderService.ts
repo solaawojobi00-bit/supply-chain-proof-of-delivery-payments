@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { callAttest, callClaim, callCreate, callReclaim, deployEscrowContract, readOnChainOrder } from "./contractOps.js";
+import {
+  callAttest,
+  callClaim,
+  callCreate,
+  callReclaim,
+  deployEscrowContract,
+  readOnChainOrder,
+} from "./contractOps.js";
 import { config } from "./config.js";
 import { getOrder, insertOrder, listOrders, updateOrderStatus, type OrderRow } from "./db.js";
 import { HttpError } from "./httpError.js";
@@ -84,7 +91,10 @@ export async function attestOrder(id: string): Promise<OrderRow> {
     throw new HttpError(409, `Order is ${order.status}; can only attest an order that is Created`);
   }
   if (Date.now() / 1000 >= order.deadline) {
-    throw new HttpError(409, "Deadline has already passed; this order can only be reclaimed by the buyer now");
+    throw new HttpError(
+      409,
+      "Deadline has already passed; this order can only be reclaimed by the buyer now",
+    );
   }
   const signer = findLocalSigner(order.attestor_address);
   if (!signer) {
@@ -101,7 +111,10 @@ export async function attestOrder(id: string): Promise<OrderRow> {
 export async function claimOrder(id: string): Promise<OrderRow> {
   const order = requireOrder(id);
   if (order.status !== "Attested") {
-    throw new HttpError(409, `Order is ${order.status}; can only claim an order that has been Attested`);
+    throw new HttpError(
+      409,
+      `Order is ${order.status}; can only claim an order that has been Attested`,
+    );
   }
   const signer = findLocalSigner(order.seller_address);
   if (!signer) {
@@ -118,7 +131,10 @@ export async function claimOrder(id: string): Promise<OrderRow> {
 export async function reclaimOrder(id: string): Promise<OrderRow> {
   const order = requireOrder(id);
   if (order.status !== "Created") {
-    throw new HttpError(409, `Order is ${order.status}; can only reclaim an order that is still Created`);
+    throw new HttpError(
+      409,
+      `Order is ${order.status}; can only reclaim an order that is still Created`,
+    );
   }
   if (Date.now() / 1000 < order.deadline) {
     throw new HttpError(409, "Deadline has not passed yet; buyer cannot reclaim until it does");

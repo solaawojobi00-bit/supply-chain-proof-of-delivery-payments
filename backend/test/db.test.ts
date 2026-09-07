@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { db, getOrder, insertOrder, listOrders, updateOrderStatus, type OrderRow } from "../src/db.js";
+import { getOrder, insertOrder, listOrders, updateOrderStatus, type OrderRow } from "../src/db.js";
 
 describe("Database Operations (db.ts)", () => {
   it("inserts and retrieves an order by id", () => {
