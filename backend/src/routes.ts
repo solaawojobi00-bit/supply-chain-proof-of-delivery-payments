@@ -65,6 +65,7 @@ function serialize(order: OrderRow) {
       attestor: order.attestor_token ?? null,
       arbiter: order.arbiter_token ?? null,
     },
+    webhookUrl: order.webhook_url ?? null,
     txHashes: {
       create: order.create_tx_hash,
       attest: order.attest_tx_hash,
@@ -118,6 +119,7 @@ router.post(
       amountStroops,
       deadlineSeconds,
       tokenContractId,
+      webhookUrl,
     } = parseResult.data;
     const normalizedPayload = JSON.stringify({
       sellerAddress,
@@ -129,6 +131,7 @@ router.post(
       amountStroops,
       deadlineSeconds,
       tokenContractId,
+      webhookUrl,
     });
 
     if (idempotencyKey) {
@@ -157,6 +160,7 @@ router.post(
           amountStroops: BigInt(amountStroops),
           deadlineSeconds: BigInt(deadlineSeconds),
           tokenContractId,
+          webhookUrl,
         },
         idempotencyKey,
         normalizedPayload,
@@ -180,6 +184,7 @@ router.post(
         amountStroops: BigInt(amountStroops),
         deadlineSeconds: BigInt(deadlineSeconds),
         tokenContractId,
+        webhookUrl,
       },
       idempotencyKey,
       normalizedPayload,

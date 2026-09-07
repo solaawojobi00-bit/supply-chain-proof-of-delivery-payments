@@ -44,6 +44,7 @@ import {
 } from "./db.js";
 import { HttpError } from "./httpError.js";
 import { buyerKeypair, deployerKeypair, findLocalSigner } from "./keys.js";
+import { dispatchWebhook } from "./webhook.js";
 
 export interface CreateOrderInput {
   sellerAddress: string;
@@ -55,6 +56,7 @@ export interface CreateOrderInput {
   amountStroops: bigint;
   deadlineSeconds: bigint;
   tokenContractId?: string;
+  webhookUrl?: string;
 }
 
 function requireOrder(id: string): OrderRow {
@@ -150,11 +152,13 @@ export async function createOrder(
     seller_token: `seller_${randomUUID()}`,
     attestor_token: `attestor_${randomUUID()}`,
     arbiter_token: `arbiter_${randomUUID()}`,
+    webhook_url: input.webhookUrl ?? null,
     idempotency_key: idempotencyKey ?? null,
     request_payload: requestPayload ?? null,
     created_at: new Date().toISOString(),
   };
   insertOrder(row);
+  await dispatchWebhook(row, "order.created", row.create_tx_hash);
   return row;
 }
 
@@ -240,7 +244,10 @@ export async function attestOrder(id: string, attestorAddress?: string): Promise
   const nextStatus = nextConfirmations.length >= requiredThreshold ? "Attested" : "Created";
 
   updateOrderAttestation(id, nextStatus, nextConfirmations, txHash ?? "");
-  return requireOrder(id);
+  const updatedAttest = requireOrder(id);
+  const event = updatedAttest.status === "Attested" ? "order.attested" : "order.confirmed";
+  await dispatchWebhook(updatedAttest, event, txHash);
+  return updatedAttest;
 }
 
 export async function claimOrder(id: string): Promise<OrderRow> {
@@ -263,7 +270,9 @@ export async function claimOrder(id: string): Promise<OrderRow> {
       ? await callRegistryClaim(order.contract_id, signer, BigInt(order.numeric_id))
       : await callClaim(order.contract_id, signer);
   updateOrderStatus(id, "Claimed", "claim_tx_hash", txHash ?? "");
-  return requireOrder(id);
+  const updatedClaim = requireOrder(id);
+  await dispatchWebhook(updatedClaim, "order.claimed", txHash);
+  return updatedClaim;
 }
 
 export async function reclaimOrder(id: string): Promise<OrderRow> {
@@ -282,7 +291,9 @@ export async function reclaimOrder(id: string): Promise<OrderRow> {
       ? await callRegistryReclaim(order.contract_id, buyerKeypair, BigInt(order.numeric_id))
       : await callReclaim(order.contract_id, buyerKeypair);
   updateOrderStatus(id, "Reclaimed", "reclaim_tx_hash", txHash ?? "");
-  return requireOrder(id);
+  const updatedReclaim = requireOrder(id);
+  await dispatchWebhook(updatedReclaim, "order.reclaimed", txHash);
+  return updatedReclaim;
 }
 
 export async function cancelOrder(id: string): Promise<OrderRow> {
@@ -314,7 +325,9 @@ export async function cancelOrder(id: string): Promise<OrderRow> {
         )
       : await callCancel(order.contract_id, buyerSigner, sellerSigner);
   updateOrderStatus(id, "Cancelled", "cancel_tx_hash", txHash ?? "");
-  return requireOrder(id);
+  const updatedCancel = requireOrder(id);
+  await dispatchWebhook(updatedCancel, "order.cancelled", txHash);
+  return updatedCancel;
 }
 
 export async function disputeOrder(id: string): Promise<OrderRow> {
@@ -337,7 +350,9 @@ export async function disputeOrder(id: string): Promise<OrderRow> {
       ? await callRegistryDispute(order.contract_id, buyerSigner, BigInt(order.numeric_id))
       : await callDispute(order.contract_id, buyerSigner);
   updateOrderStatus(id, "Disputed", "dispute_tx_hash", txHash ?? "");
-  return requireOrder(id);
+  const updatedDispute = requireOrder(id);
+  await dispatchWebhook(updatedDispute, "order.disputed", txHash);
+  return updatedDispute;
 }
 
 export async function buildUnsignedCreateOrder(
@@ -408,11 +423,13 @@ export async function buildUnsignedCreateOrder(
     seller_token: `seller_${randomUUID()}`,
     attestor_token: `attestor_${randomUUID()}`,
     arbiter_token: `arbiter_${randomUUID()}`,
+    webhook_url: input.webhookUrl ?? null,
     idempotency_key: idempotencyKey ?? null,
     request_payload: requestPayload ?? null,
     created_at: new Date().toISOString(),
   };
   insertOrder(row);
+  await dispatchWebhook(row, "order.created", null);
   return { unsignedTxXdr, order: row };
 }
 
@@ -607,7 +624,9 @@ export async function resolveDispute(id: string, releaseToSeller: boolean): Prom
       : await callResolveDispute(order.contract_id, arbiterSigner, releaseToSeller);
   const nextStatus = releaseToSeller ? "Claimed" : "Reclaimed";
   updateOrderStatus(id, nextStatus, "resolve_tx_hash", txHash ?? "");
-  return requireOrder(id);
+  const updatedResolve = requireOrder(id);
+  await dispatchWebhook(updatedResolve, "order.resolved", txHash);
+  return updatedResolve;
 }
 
 export async function submitSignedTx(
@@ -684,5 +703,18 @@ export async function submitSignedTx(
     }
   }
 
-  return { txHash: result.txHash, status: result.status, order: requireOrder(orderId) };
+  const updatedOrder = requireOrder(orderId);
+  const eventMap: Record<string, string> = {
+    create: "order.created",
+    attest: updatedOrder.status === "Attested" ? "order.attested" : "order.confirmed",
+    claim: "order.claimed",
+    reclaim: "order.reclaimed",
+    cancel: "order.cancelled",
+    dispute: "order.disputed",
+    resolve: "order.resolved",
+  };
+  const event = (action && eventMap[action]) || `order.${updatedOrder.status.toLowerCase()}`;
+  await dispatchWebhook(updatedOrder, event, result.txHash);
+
+  return { txHash: result.txHash, status: result.status, order: updatedOrder };
 }

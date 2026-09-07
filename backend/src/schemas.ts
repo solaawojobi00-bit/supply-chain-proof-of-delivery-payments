@@ -89,6 +89,7 @@ export const createOrderSchema = z
         message: "buyerAddress must be a valid Stellar public key (G...)",
       })
       .optional(),
+    webhookUrl: z.string().url({ message: "webhookUrl must be a valid URL" }).optional(),
   })
   .refine(
     (data) => Boolean(data.attestors && data.attestors.length > 0) || Boolean(data.attestorAddress),

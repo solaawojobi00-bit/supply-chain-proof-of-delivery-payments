@@ -660,4 +660,48 @@ describe("API Routes (routes.ts)", () => {
       expect(submitData.order.id).toBe(order.id);
     });
   });
+
+  describe("Webhook Notifications (Issue #13)", () => {
+    it("POST /orders accepts valid webhookUrl and returns it in serialized response", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const res = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestorAddress: attestorKeypair.publicKey(),
+          amountStroops: "10000000",
+          deadlineSeconds: deadline.toString(),
+          webhookUrl: "https://merchant.example.com/webhooks/orders",
+        }),
+      });
+      expect(res.status).toBe(201);
+      const data = (await res.json()) as any;
+      expect(data.webhookUrl).toBe("https://merchant.example.com/webhooks/orders");
+
+      const getRes = await fetch(`${baseUrl}/orders/${data.id}`);
+      expect(getRes.status).toBe(200);
+      const fetched = (await getRes.json()) as any;
+      expect(fetched.webhookUrl).toBe("https://merchant.example.com/webhooks/orders");
+    });
+
+    it("POST /orders rejects malformed webhookUrl with 400 Bad Request", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const res = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestorAddress: attestorKeypair.publicKey(),
+          amountStroops: "10000000",
+          deadlineSeconds: deadline.toString(),
+          webhookUrl: "not-a-valid-url",
+        }),
+      });
+      expect(res.status).toBe(400);
+      const err = (await res.json()) as any;
+      expect(err.error).toContain("webhookUrl");
+      expect(err.error).toContain("valid URL");
+    });
+  });
 });

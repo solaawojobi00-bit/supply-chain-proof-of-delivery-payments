@@ -32,6 +32,7 @@ export interface OrderRow {
   seller_token?: string | null;
   attestor_token?: string | null;
   arbiter_token?: string | null;
+  webhook_url?: string | null;
   idempotency_key?: string | null;
   request_payload?: string | null;
   created_at: string;
@@ -68,6 +69,7 @@ db.exec(`
     seller_token TEXT,
     attestor_token TEXT,
     arbiter_token TEXT,
+    webhook_url TEXT,
     idempotency_key TEXT UNIQUE,
     request_payload TEXT,
     created_at TEXT NOT NULL
@@ -158,6 +160,12 @@ try {
   // column already exists
 }
 
+try {
+  db.exec(`ALTER TABLE orders ADD COLUMN webhook_url TEXT`);
+} catch {
+  // column already exists
+}
+
 export function insertOrder(row: OrderRow): void {
   db.prepare(
     `INSERT INTO orders (
@@ -167,6 +175,7 @@ export function insertOrder(row: OrderRow): void {
       create_tx_hash, attest_tx_hash, claim_tx_hash, reclaim_tx_hash, cancel_tx_hash,
       dispute_tx_hash, resolve_tx_hash,
       buyer_token, seller_token, attestor_token, arbiter_token,
+      webhook_url,
       idempotency_key, request_payload, created_at
     ) VALUES (
       @id, @contract_id, @numeric_id, @buyer_address, @seller_address, @attestor_address,
@@ -175,6 +184,7 @@ export function insertOrder(row: OrderRow): void {
       @create_tx_hash, @attest_tx_hash, @claim_tx_hash, @reclaim_tx_hash, @cancel_tx_hash,
       @dispute_tx_hash, @resolve_tx_hash,
       @buyer_token, @seller_token, @attestor_token, @arbiter_token,
+      @webhook_url,
       @idempotency_key, @request_payload, @created_at
     )`,
   ).run({
@@ -191,6 +201,7 @@ export function insertOrder(row: OrderRow): void {
     seller_token: row.seller_token ?? null,
     attestor_token: row.attestor_token ?? null,
     arbiter_token: row.arbiter_token ?? null,
+    webhook_url: row.webhook_url ?? null,
     idempotency_key: row.idempotency_key ?? null,
     request_payload: row.request_payload ?? null,
   });
