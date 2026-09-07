@@ -42,7 +42,11 @@ export function lifecycleLabel(order: OrderRow): string {
   }
 }
 
-export async function createOrder(input: CreateOrderInput): Promise<OrderRow> {
+export async function createOrder(
+  input: CreateOrderInput,
+  idempotencyKey?: string,
+  requestPayload?: string,
+): Promise<OrderRow> {
   const { contractId, txHash } = await deployEscrowContract();
   const createTxHash = await callCreate(contractId, buyerKeypair, {
     seller: input.sellerAddress,
@@ -65,6 +69,8 @@ export async function createOrder(input: CreateOrderInput): Promise<OrderRow> {
     attest_tx_hash: null,
     claim_tx_hash: null,
     reclaim_tx_hash: null,
+    idempotency_key: idempotencyKey ?? null,
+    request_payload: requestPayload ?? null,
     created_at: new Date().toISOString(),
   };
   insertOrder(row);

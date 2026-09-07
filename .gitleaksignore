@@ -1,0 +1,2 @@
+# Gitleaks ignore list for false positives
+aa04b6c7337e7b55044fd1278fc4c8888f6adf65:backend/test/db.test.ts:generic-api-key:94
