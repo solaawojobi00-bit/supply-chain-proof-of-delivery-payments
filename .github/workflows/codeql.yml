@@ -20,18 +20,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Note: Scoped to JavaScript/TypeScript (backend/ service).
-        # Rust contract CodeQL support is experimental and tracked in issue #24.
-        language: ["javascript-typescript"]
+        language: ["javascript-typescript", "rust"]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install Rust toolchain
+        if: matrix.language == 'rust'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
