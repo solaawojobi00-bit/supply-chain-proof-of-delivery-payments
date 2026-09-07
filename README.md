@@ -14,8 +14,8 @@ contract, and why Claimable Balances don't fit this use case).
 ## Status: Phase 1
 
 Phase 1 is a genuinely working, end-to-end flow, run against real Stellar
-testnet (not mocked): create an order, attest delivery, seller claims — and
-separately, deadline passes with no attestation, buyer reclaims. See the
+testnet (not mocked): create an order, attest delivery, seller claims — along
+with deadline-based buyer reclaim, and mutual buyer/seller order cancellation. See the
 [Phase 2+ backlog](#phase-2-backlog) for what's deliberately deferred.
 
 ## Repo layout
@@ -92,12 +92,14 @@ transaction hash for every state-changing call.
 The escrow smart contracts and REST API accept any Stellar Asset Contract (SAC) or custom Soroban token. To test with a non-native asset on testnet:
 
 1. **Derive or Deploy the Asset Contract ID**:
+
    ```bash
    # Example: Obtain the SAC contract address for an issued test asset
    stellar contract id asset --asset <ASSET_CODE>:<ISSUER_PUBLIC_KEY> --network testnet
    ```
 
 2. **Supply `tokenContractId` in `POST /orders`**:
+
    ```json
    {
      "sellerAddress": "GC5H3W256B3QW4A44GAK36XN763K2KRN7O2OESN553TUXW7R6AKN4V6E",
@@ -107,7 +109,8 @@ The escrow smart contracts and REST API accept any Stellar Asset Contract (SAC) 
      "tokenContractId": "<TOKEN_CONTRACT_ID>"
    }
    ```
-   *(If omitted, `tokenContractId` defaults to the native XLM Stellar Asset Contract configured in `.env`).*
+
+   _(If omitted, `tokenContractId` defaults to the native XLM Stellar Asset Contract configured in `.env`)._
 
 3. **Run Demo with Custom Token**:
    ```bash
@@ -118,14 +121,15 @@ The escrow smart contracts and REST API accept any Stellar Asset Contract (SAC) 
 
 A complete machine-readable OpenAPI 3.0 specification is available at [`backend/openapi.yaml`](backend/openapi.yaml).
 
-| Endpoint | Effect |
-|---|---|
-| `POST /orders` | Create an order: `{ sellerAddress, attestorAddress, amountStroops, deadlineSeconds, tokenContractId? }` |
-| `GET /orders` | List all orders |
-| `GET /orders/:id` | Order status, including a live on-chain read |
-| `POST /orders/:id/attest` | Attestor confirms delivery |
-| `POST /orders/:id/claim` | Seller claims the escrowed funds |
-| `POST /orders/:id/reclaim` | Buyer reclaims funds once the deadline has passed |
+| Endpoint                   | Effect                                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `POST /orders`             | Create an order: `{ sellerAddress, attestorAddress, amountStroops, deadlineSeconds, tokenContractId? }` |
+| `GET /orders`              | List all orders                                                                                         |
+| `GET /orders/:id`          | Order status, including a live on-chain read                                                            |
+| `POST /orders/:id/attest`  | Attestor confirms delivery                                                                              |
+| `POST /orders/:id/claim`   | Seller claims the escrowed funds                                                                        |
+| `POST /orders/:id/reclaim` | Buyer reclaims funds once the deadline has passed                                                       |
+| `POST /orders/:id/cancel`  | Buyer and seller mutually cancel order before attestation, refunding buyer                              |
 
 ## Development & Quality Checks
 

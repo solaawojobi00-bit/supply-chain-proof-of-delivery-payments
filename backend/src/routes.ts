@@ -2,6 +2,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import { HttpError } from "./httpError.js";
 import {
   attestOrder,
+  cancelOrder,
   claimOrder,
   createOrder,
   getAllOrders,
@@ -35,6 +36,7 @@ function serialize(order: OrderRow) {
       attest: order.attest_tx_hash,
       claim: order.claim_tx_hash,
       reclaim: order.reclaim_tx_hash,
+      cancel: order.cancel_tx_hash ?? null,
     },
     createdAt: order.created_at,
   };
@@ -137,5 +139,12 @@ router.post(
   "/orders/:id/reclaim",
   asyncHandler(async (req, res) => {
     res.json(serialize(await reclaimOrder(String(req.params.id))));
+  }),
+);
+
+router.post(
+  "/orders/:id/cancel",
+  asyncHandler(async (req, res) => {
+    res.json(serialize(await cancelOrder(String(req.params.id))));
   }),
 );

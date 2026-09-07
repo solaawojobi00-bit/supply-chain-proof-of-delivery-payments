@@ -19,6 +19,12 @@ vi.mock("../src/contractOps.js", () => {
     callAttest: vi.fn(async () => "mock-attest-tx-hash"),
     callClaim: vi.fn(async () => "mock-claim-tx-hash"),
     callReclaim: vi.fn(async () => "mock-reclaim-tx-hash"),
+    callCancel: vi.fn(async () => "mock-cancel-tx-hash"),
+    callRegistryCreateOrder: vi.fn(async () => "mock-reg-create-tx-hash"),
+    callRegistryAttest: vi.fn(async () => "mock-reg-attest-tx-hash"),
+    callRegistryClaim: vi.fn(async () => "mock-reg-claim-tx-hash"),
+    callRegistryReclaim: vi.fn(async () => "mock-reg-reclaim-tx-hash"),
+    callRegistryCancel: vi.fn(async () => "mock-reg-cancel-tx-hash"),
     readOnChainOrder: vi.fn(async (contractId: string) => ({
       buyer: buyerKeypair.publicKey(),
       seller: sellerKeypair.publicKey(),
@@ -226,6 +232,47 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       const allOrders = (await listRes.json()) as Array<{ id: string; status: string }>;
       const matching = allOrders.find((o) => o.id === created.id);
       expect(matching?.status).toBe("Reclaimed");
+    });
+  });
+
+  describe("Full Lifecycle 3: Mutual Cancellation Path (Create -> Cancel)", () => {
+    it("executes mutual order cancellation before attestation, refunding buyer", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+      const createRes = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestorAddress: attestorKeypair.publicKey(),
+          amountStroops: "60000000",
+          deadlineSeconds: String(deadline),
+        }),
+      });
+      expect(createRes.status).toBe(201);
+      const created = (await createRes.json()) as { id: string; status: string };
+
+      // Cancel order mutually
+      const cancelRes = await fetch(`${baseUrl}/orders/${created.id}/cancel`, {
+        method: "POST",
+      });
+      expect(cancelRes.status).toBe(200);
+      const cancelled = (await cancelRes.json()) as {
+        id: string;
+        status: string;
+        lifecycle: string;
+        txHashes: { cancel: string };
+      };
+      expect(cancelled.id).toBe(created.id);
+      expect(cancelled.status).toBe("Cancelled");
+      expect(cancelled.lifecycle).toBe("cancelled");
+      expect(cancelled.txHashes.cancel).toBe("mock-cancel-tx-hash");
+
+      // Verify state in GET /orders/:id
+      const getRes = await fetch(`${baseUrl}/orders/${created.id}`);
+      const fetched = (await getRes.json()) as { status: string; lifecycle: string };
+      expect(fetched.status).toBe("Cancelled");
+      expect(fetched.lifecycle).toBe("cancelled");
     });
   });
 
@@ -445,6 +492,64 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
         method: "POST",
       });
       expect(reclaimRes.status).toBe(404);
+
+      const cancelRes = await fetch(`${baseUrl}/orders/${nonExistentId}/cancel`, {
+        method: "POST",
+      });
+      expect(cancelRes.status).toBe(404);
+    });
+
+    it("Cancel after attest: rejects cancellation once delivery has been attested (409 Conflict)", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const createRes = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestorAddress: attestorKeypair.publicKey(),
+          amountStroops: "10000000",
+          deadlineSeconds: String(deadline),
+        }),
+      });
+      const order = (await createRes.json()) as { id: string };
+
+      await fetch(`${baseUrl}/orders/${order.id}/attest`, { method: "POST" });
+
+      const cancelRes = await fetch(`${baseUrl}/orders/${order.id}/cancel`, { method: "POST" });
+      expect(cancelRes.status).toBe(409);
+      const errorBody = (await cancelRes.json()) as { error: string };
+      expect(errorBody.error).toContain(
+        "Order is Attested; can only cancel an order that is Created",
+      );
+    });
+
+    it("Cancel after reclaim: rejects cancellation once order has been reclaimed (409 Conflict)", async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const createRes = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerAddress: sellerKeypair.publicKey(),
+          attestorAddress: attestorKeypair.publicKey(),
+          amountStroops: "10000000",
+          deadlineSeconds: String(deadline),
+        }),
+      });
+      const order = (await createRes.json()) as { id: string };
+
+      // Expire and reclaim
+      db.prepare("UPDATE orders SET deadline = ? WHERE id = ?").run(
+        Math.floor(Date.now() / 1000) - 10,
+        order.id,
+      );
+      await fetch(`${baseUrl}/orders/${order.id}/reclaim`, { method: "POST" });
+
+      const cancelRes = await fetch(`${baseUrl}/orders/${order.id}/cancel`, { method: "POST" });
+      expect(cancelRes.status).toBe(409);
+      const errorBody = (await cancelRes.json()) as { error: string };
+      expect(errorBody.error).toContain(
+        "Order is Reclaimed; can only cancel an order that is Created",
+      );
     });
 
     it("Validation Errors: returns 400 with descriptive error on invalid inputs", async () => {

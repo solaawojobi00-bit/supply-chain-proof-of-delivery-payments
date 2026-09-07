@@ -12,7 +12,22 @@ vi.mock("../src/contractOps.js", () => ({
   callAttest: vi.fn(async () => "mock-attest-hash"),
   callClaim: vi.fn(async () => "mock-claim-hash"),
   callReclaim: vi.fn(async () => "mock-reclaim-hash"),
+  callCancel: vi.fn(async () => "mock-cancel-hash"),
+  callRegistryCreateOrder: vi.fn(async () => "mock-reg-create-hash"),
+  callRegistryAttest: vi.fn(async () => "mock-reg-attest-hash"),
+  callRegistryClaim: vi.fn(async () => "mock-reg-claim-hash"),
+  callRegistryReclaim: vi.fn(async () => "mock-reg-reclaim-hash"),
+  callRegistryCancel: vi.fn(async () => "mock-reg-cancel-hash"),
   readOnChainOrder: vi.fn(async () => ({
+    buyer: buyerKeypair.publicKey(),
+    seller: sellerKeypair.publicKey(),
+    attestor: attestorKeypair.publicKey(),
+    token: "mock-token-id",
+    amount: 10000000n,
+    deadline: 9999999999n,
+    status: "Created",
+  })),
+  readOnChainRegistryOrder: vi.fn(async () => ({
     buyer: buyerKeypair.publicKey(),
     seller: sellerKeypair.publicKey(),
     attestor: attestorKeypair.publicKey(),
@@ -261,5 +276,56 @@ describe("API Routes (routes.ts)", () => {
     expect(conflictRes.status).toBe(409);
     const errorBody = (await conflictRes.json()) as { error: string };
     expect(errorBody.error).toContain("Idempotency key");
+  });
+
+  it("POST /orders/:id/cancel mutually cancels order and updates status to Cancelled", async () => {
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
+    const createRes = await fetch(`${baseUrl}/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sellerAddress: sellerKeypair.publicKey(),
+        attestorAddress: attestorKeypair.publicKey(),
+        amountStroops: "30000000",
+        deadlineSeconds: deadline.toString(),
+      }),
+    });
+    const order = (await createRes.json()) as any;
+
+    const cancelRes = await fetch(`${baseUrl}/orders/${order.id}/cancel`, {
+      method: "POST",
+    });
+    expect(cancelRes.status).toBe(200);
+    const cancelledOrder = (await cancelRes.json()) as any;
+    expect(cancelledOrder.status).toBe("Cancelled");
+    expect(cancelledOrder.lifecycle).toBe("cancelled");
+    expect(cancelledOrder.txHashes.cancel).toBe("mock-cancel-hash");
+  });
+
+  it("POST /orders/:id/cancel fails with 409 if order is not in Created status", async () => {
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
+    const createRes = await fetch(`${baseUrl}/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sellerAddress: sellerKeypair.publicKey(),
+        attestorAddress: attestorKeypair.publicKey(),
+        amountStroops: "30000000",
+        deadlineSeconds: deadline.toString(),
+      }),
+    });
+    const order = (await createRes.json()) as any;
+
+    await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+      method: "POST",
+    });
+
+    const cancelRes = await fetch(`${baseUrl}/orders/${order.id}/cancel`, {
+      method: "POST",
+    });
+    expect(cancelRes.status).toBe(409);
+    const body = (await cancelRes.json()) as { error: string };
+    expect(body.error).toContain("Attested");
+    expect(body.error).toContain("Created");
   });
 });

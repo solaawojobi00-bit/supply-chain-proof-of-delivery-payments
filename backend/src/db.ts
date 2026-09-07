@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { config } from "./config.js";
 
-export type OrderStatus = "Created" | "Attested" | "Claimed" | "Reclaimed";
+export type OrderStatus = "Created" | "Attested" | "Claimed" | "Reclaimed" | "Cancelled";
 
 export interface OrderRow {
   id: string;
@@ -20,6 +20,7 @@ export interface OrderRow {
   attest_tx_hash: string | null;
   claim_tx_hash: string | null;
   reclaim_tx_hash: string | null;
+  cancel_tx_hash?: string | null;
   idempotency_key?: string | null;
   request_payload?: string | null;
   created_at: string;
@@ -45,6 +46,7 @@ db.exec(`
     attest_tx_hash TEXT,
     claim_tx_hash TEXT,
     reclaim_tx_hash TEXT,
+    cancel_tx_hash TEXT,
     idempotency_key TEXT UNIQUE,
     request_payload TEXT,
     created_at TEXT NOT NULL
@@ -69,22 +71,29 @@ try {
   // column already exists
 }
 
+try {
+  db.exec(`ALTER TABLE orders ADD COLUMN cancel_tx_hash TEXT`);
+} catch {
+  // column already exists
+}
+
 export function insertOrder(row: OrderRow): void {
   db.prepare(
     `INSERT INTO orders (
       id, contract_id, numeric_id, buyer_address, seller_address, attestor_address,
       token_contract_id, amount, deadline, status,
-      create_tx_hash, attest_tx_hash, claim_tx_hash, reclaim_tx_hash,
+      create_tx_hash, attest_tx_hash, claim_tx_hash, reclaim_tx_hash, cancel_tx_hash,
       idempotency_key, request_payload, created_at
     ) VALUES (
       @id, @contract_id, @numeric_id, @buyer_address, @seller_address, @attestor_address,
       @token_contract_id, @amount, @deadline, @status,
-      @create_tx_hash, @attest_tx_hash, @claim_tx_hash, @reclaim_tx_hash,
+      @create_tx_hash, @attest_tx_hash, @claim_tx_hash, @reclaim_tx_hash, @cancel_tx_hash,
       @idempotency_key, @request_payload, @created_at
     )`,
   ).run({
     ...row,
     numeric_id: row.numeric_id ?? null,
+    cancel_tx_hash: row.cancel_tx_hash ?? null,
     idempotency_key: row.idempotency_key ?? null,
     request_payload: row.request_payload ?? null,
   });
@@ -106,7 +115,7 @@ export function listOrders(): OrderRow[] {
 export function updateOrderStatus(
   id: string,
   status: OrderStatus,
-  txHashColumn: "attest_tx_hash" | "claim_tx_hash" | "reclaim_tx_hash",
+  txHashColumn: "attest_tx_hash" | "claim_tx_hash" | "reclaim_tx_hash" | "cancel_tx_hash",
   txHash: string,
 ): void {
   db.prepare(`UPDATE orders SET status = ?, ${txHashColumn} = ? WHERE id = ?`).run(
