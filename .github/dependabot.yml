@@ -1,0 +1,34 @@
+version: 2
+updates:
+  # 1. npm ecosystem for backend service
+  - package-ecosystem: "npm"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    groups:
+      stellar:
+        patterns:
+          - "@stellar/*"
+      express:
+        patterns:
+          - "express"
+          - "@types/express"
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+
+  # 2. cargo ecosystem for workspace root
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      soroban:
+        patterns:
+          - "soroban-*"
+
+  # 3. GitHub Actions ecosystem
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

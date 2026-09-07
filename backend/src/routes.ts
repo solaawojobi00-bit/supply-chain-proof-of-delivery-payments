@@ -13,6 +13,10 @@ import type { OrderRow } from "./db.js";
 
 export const router = Router();
 
+router.get("/health", (_req: Request, res: Response) => {
+  res.json({ status: "ok" });
+});
+
 function serialize(order: OrderRow) {
   return {
     id: order.id,
@@ -46,7 +50,10 @@ router.post(
   asyncHandler(async (req, res) => {
     const { sellerAddress, attestorAddress, amountStroops, deadlineSeconds } = req.body ?? {};
     if (!sellerAddress || !attestorAddress || !amountStroops || !deadlineSeconds) {
-      throw new HttpError(400, "sellerAddress, attestorAddress, amountStroops, and deadlineSeconds are required");
+      throw new HttpError(
+        400,
+        "sellerAddress, attestorAddress, amountStroops, and deadlineSeconds are required",
+      );
     }
     const order = await createOrder({
       sellerAddress,

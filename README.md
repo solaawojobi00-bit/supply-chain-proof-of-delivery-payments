@@ -1,5 +1,7 @@
 # Supply Chain Proof-of-Delivery Payments
 
+[![CI](https://github.com/solaawojobi00-bit/supply-chain-proof-of-delivery-payments/actions/workflows/ci.yml/badge.svg)](https://github.com/solaawojobi00-bit/supply-chain-proof-of-delivery-payments/actions/workflows/ci.yml)
+
 A buyer's payment is held in escrow on Stellar and only released to the
 seller once a trusted attestor (e.g. a courier or warehouse operator)
 confirms delivery. If delivery isn't confirmed by an agreed deadline, the
@@ -19,8 +21,11 @@ separately, deadline passes with no attestation, buyer reclaims. See the
 ## Repo layout
 
 ```
-contracts/escrow/   Soroban escrow contract (Rust)
-backend/             REST API + order tracking (Node/TypeScript)
+contracts/escrow/        Soroban escrow contract (Rust)
+backend/                 REST API + order tracking (Node/TypeScript)
+scripts/                 Hygiene & audit tools (e.g. unified dependency audit gate)
+.github/workflows/       CI, CodeQL, Gitleaks, and Release workflows
+.github/dependabot.yml   Automated dependency update configuration
 PRD.md
 ARCHITECTURE.md
 ```
@@ -94,6 +99,44 @@ A complete machine-readable OpenAPI 3.0 specification is available at [`backend/
 | `POST /orders/:id/attest` | Attestor confirms delivery |
 | `POST /orders/:id/claim` | Seller claims the escrowed funds |
 | `POST /orders/:id/reclaim` | Buyer reclaims funds once the deadline has passed |
+
+## Development & Quality Checks
+
+Run linting, formatting, typechecking, tests, and security audits locally:
+
+### Smart Contract (`contracts/escrow`)
+
+```bash
+# Check contract compilation and lockfile
+cargo check --locked --manifest-path contracts/escrow/Cargo.toml
+
+# Run contract unit tests
+cargo test --manifest-path contracts/escrow/Cargo.toml
+```
+
+### Backend Service (`backend/`)
+
+```bash
+cd backend
+
+# Run ESLint
+npm run lint
+
+# Check code formatting (or run `npm run format` to auto-format)
+npm run format:check
+
+# Run TypeScript typechecking
+npm run typecheck
+
+# Run unit and integration tests with coverage
+npm test
+```
+
+### Dependency Audit Gate & Maintenance
+
+- **Dependency Audit Gate**: Run `node scripts/audit-deps.mjs` to execute the unified audit gate across npm and cargo dependencies (failing CI on high/critical advisories while gracefully handling registry warnings).
+- **Audit Test Harness**: Run `node --test scripts/test-audit-deps.mjs` to run the regression test suite for the audit gate.
+- **Dependabot**: Dependabot configuration lives in [`.github/dependabot.yml`](.github/dependabot.yml), providing weekly automated updates for npm (`/backend`), cargo (`/`), and GitHub Actions.
 
 ## Phase 2+ backlog
 

@@ -8,19 +8,29 @@
     "start": "tsx src/index.ts",
     "demo:claim": "tsx demo/demo.ts claim",
     "demo:reclaim": "tsx demo/demo.ts reclaim",
+    "format:check": "prettier --check .",
+    "format": "prettier --write .",
+    "lint": "eslint .",
+    "test": "vitest run --coverage",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^16.2.0",
-    "better-sqlite3": "^13.0.2",
-    "dotenv": "^16.4.5",
+    "@stellar/stellar-sdk": "^17.0.1",
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/better-sqlite3": "^7.6.11",
     "@types/express": "^5.0.0",
-    "@types/node": "^22.10.0",
-    "tsx": "^4.23.4",
-    "typescript": "^5.7.2"
+    "@types/node": "^26.4.1",
+    "@vitest/coverage-v8": "^5.0.0",
+    "eslint": "^10.10.0",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.13",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.69.0",
+    "vitest": "^5.0.0"
   }
 }

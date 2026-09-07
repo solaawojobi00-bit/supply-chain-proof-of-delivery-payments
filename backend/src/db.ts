@@ -73,5 +73,9 @@ export function updateOrderStatus(
   txHashColumn: "attest_tx_hash" | "claim_tx_hash" | "reclaim_tx_hash",
   txHash: string,
 ): void {
-  db.prepare(`UPDATE orders SET status = ?, ${txHashColumn} = ? WHERE id = ?`).run(status, txHash, id);
+  db.prepare(`UPDATE orders SET status = ?, ${txHashColumn} = ? WHERE id = ?`).run(
+    status,
+    txHash,
+    id,
+  );
 }
