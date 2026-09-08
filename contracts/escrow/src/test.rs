@@ -339,7 +339,7 @@ fn test_cancel_after_reclaim_fails() {
 #[test]
 fn test_dispute_before_attestation_fails() {
     let s = setup(1000);
-    let result = s.client.try_dispute();
+    let result = s.client.try_dispute(&None);
     assert_eq!(result, Err(Ok(Error::WrongStatus)));
 }
 
@@ -349,7 +349,7 @@ fn test_dispute_after_claim_fails() {
     s.client.attest(&s.attestor1);
     s.client.attest(&s.attestor2);
     s.client.claim();
-    let result = s.client.try_dispute();
+    let result = s.client.try_dispute(&None);
     assert_eq!(result, Err(Ok(Error::WrongStatus)));
 }
 
@@ -360,9 +360,11 @@ fn test_dispute_blocks_seller_claim() {
     s.client.attest(&s.attestor2);
     assert_eq!(s.client.get_order().status, OrderStatus::Attested);
 
-    // Buyer raises dispute
-    s.client.dispute();
-    assert_eq!(s.client.get_order().status, OrderStatus::Disputed);
+    // Buyer raises dispute without evidence hash
+    s.client.dispute(&None);
+    let order = s.client.get_order();
+    assert_eq!(order.status, OrderStatus::Disputed);
+    assert_eq!(order.evidence_hash, None);
 
     // Seller claim is blocked
     let claim_res = s.client.try_claim();
@@ -370,11 +372,26 @@ fn test_dispute_blocks_seller_claim() {
 }
 
 #[test]
+fn test_dispute_with_evidence_hash_stores_and_emits_event() {
+    let s = setup(1000);
+    s.client.attest(&s.attestor1);
+    s.client.attest(&s.attestor2);
+    assert_eq!(s.client.get_order().status, OrderStatus::Attested);
+
+    let dummy_hash = BytesN::from_array(&s.env, &[42u8; 32]);
+    s.client.dispute(&Some(dummy_hash.clone()));
+
+    let order = s.client.get_order();
+    assert_eq!(order.status, OrderStatus::Disputed);
+    assert_eq!(order.evidence_hash, Some(dummy_hash));
+}
+
+#[test]
 fn test_resolve_dispute_release_to_seller() {
     let s = setup(1000);
     s.client.attest(&s.attestor1);
     s.client.attest(&s.attestor2);
-    s.client.dispute();
+    s.client.dispute(&None);
     assert_eq!(s.client.get_order().status, OrderStatus::Disputed);
 
     // Arbiter resolves in favor of seller
@@ -389,7 +406,7 @@ fn test_resolve_dispute_release_to_buyer() {
     let s = setup(1000);
     s.client.attest(&s.attestor1);
     s.client.attest(&s.attestor2);
-    s.client.dispute();
+    s.client.dispute(&None);
     assert_eq!(s.client.get_order().status, OrderStatus::Disputed);
 
     // Arbiter resolves in favor of buyer (refund)

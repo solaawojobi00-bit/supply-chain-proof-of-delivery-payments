@@ -436,6 +436,12 @@ paths:
           schema:
             type: string
             format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DisputeOrderRequest"
       responses:
         "200":
           description: Order successfully transitioned to Disputed
@@ -864,6 +870,15 @@ components:
           description: Specific Stellar public address (G...) of the attestor signing the confirmation
           example: "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"
 
+    DisputeOrderRequest:
+      type: object
+      properties:
+        evidenceHash:
+          type: string
+          pattern: "^[0-9a-fA-F]{64}$"
+          description: Optional 32-byte SHA-256 hash (64 hex characters) of dispute evidence documentation.
+          example: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
     ResolveDisputeRequest:
       type: object
       required:
@@ -1018,6 +1033,11 @@ components:
             - cancelled
           description: High-level human-readable lifecycle label
           example: "in-transit"
+        evidenceHash:
+          type: string
+          nullable: true
+          description: Optional 32-byte evidence hash registered when raising a dispute.
+          example: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         tokens:
           $ref: "#/components/schemas/OrderTokens"
         webhookUrl:
@@ -1113,6 +1133,11 @@ components:
             - Cancelled
           description: Raw on-chain status
           example: "Created"
+        evidence_hash:
+          type: string
+          nullable: true
+          description: Optional 32-byte evidence hash stored on-chain.
+          example: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
     OrderWithChainState:
       allOf:
@@ -1158,6 +1183,11 @@ components:
           type: string
           description: Optional Stellar public address (G...) of the signing party
           example: "GB6NVEN5HSUBKMYCE5ZOWSK5RPO5RDTBWTJHQ35YKVGFFL3U2NOSVNQI"
+        evidenceHash:
+          type: string
+          pattern: "^[0-9a-fA-F]{64}$"
+          description: Optional 32-byte evidence hash when action is dispute.
+          example: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         releaseToSeller:
           type: boolean
           description: Required when action is resolve (true to release to seller, false to refund buyer)

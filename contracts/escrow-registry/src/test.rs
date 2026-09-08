@@ -508,7 +508,7 @@ fn test_registry_dispute_and_resolve_to_seller() {
     );
 
     // Dispute before attestation fails
-    let res = s.client.try_dispute(&order_id);
+    let res = s.client.try_dispute(&order_id, &None);
     assert_eq!(res, Err(Ok(Error::WrongStatus)));
 
     // Reach threshold attestation
@@ -517,8 +517,9 @@ fn test_registry_dispute_and_resolve_to_seller() {
     assert_eq!(s.client.get_order(&order_id).status, OrderStatus::Attested);
 
     // Buyer disputes
-    s.client.dispute(&order_id);
+    s.client.dispute(&order_id, &None);
     assert_eq!(s.client.get_order(&order_id).status, OrderStatus::Disputed);
+    assert_eq!(s.client.get_order(&order_id).evidence_hash, None);
 
     // Seller cannot claim while disputed
     let claim_res = s.client.try_claim(&order_id);
@@ -529,6 +530,35 @@ fn test_registry_dispute_and_resolve_to_seller() {
     assert_eq!(s.client.get_order(&order_id).status, OrderStatus::Claimed);
     assert_eq!(s.token_client.balance(&s.seller), s.amount);
     assert_eq!(s.token_client.balance(&s.contract_id), 0);
+}
+
+#[test]
+fn test_registry_dispute_with_evidence_hash() {
+    let s = setup();
+    let order_id: u64 = 903;
+    let deadline = s.env.ledger().timestamp() + 1000;
+
+    s.client.create_order(
+        &order_id,
+        &s.buyer,
+        &s.seller,
+        &s.attestors,
+        &s.threshold,
+        &s.arbiter,
+        &s.token,
+        &s.amount,
+        &deadline,
+    );
+
+    s.client.attest(&order_id, &s.attestor1);
+    s.client.attest(&order_id, &s.attestor2);
+
+    let dummy_hash = BytesN::from_array(&s.env, &[77u8; 32]);
+    s.client.dispute(&order_id, &Some(dummy_hash.clone()));
+
+    let order = s.client.get_order(&order_id);
+    assert_eq!(order.status, OrderStatus::Disputed);
+    assert_eq!(order.evidence_hash, Some(dummy_hash));
 }
 
 #[test]
@@ -554,7 +584,7 @@ fn test_registry_dispute_and_resolve_to_buyer() {
     s.client.attest(&order_id, &s.attestor2);
 
     // Buyer disputes
-    s.client.dispute(&order_id);
+    s.client.dispute(&order_id, &None);
     assert_eq!(s.client.get_order(&order_id).status, OrderStatus::Disputed);
 
     // Arbiter resolves releasing to buyer (refund)

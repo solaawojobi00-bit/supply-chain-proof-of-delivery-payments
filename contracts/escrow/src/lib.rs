@@ -1,7 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, BytesN,
+    Env, Vec,
 };
 
 #[contractevent]
@@ -16,6 +17,12 @@ pub struct RotateAttestorEvent {
 pub struct ExtendDeadlineEvent {
     pub old_deadline: u64,
     pub new_deadline: u64,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeEvent {
+    pub evidence_hash: Option<BytesN<32>>,
 }
 
 #[contracttype]
@@ -42,6 +49,7 @@ pub struct Order {
     pub amount: i128,
     pub deadline: u64,
     pub status: OrderStatus,
+    pub evidence_hash: Option<BytesN<32>>,
 }
 
 #[contracttype]
@@ -124,6 +132,7 @@ impl EscrowContract {
             amount,
             deadline,
             status: OrderStatus::Created,
+            evidence_hash: None,
         };
         env.storage().instance().set(&DataKey::Order, &order);
         env.storage()
@@ -271,7 +280,7 @@ impl EscrowContract {
 
     /// Buyer raises a dispute against an attested delivery before the seller claims.
     /// Only valid while `status == Attested`. Pauses the claim.
-    pub fn dispute(env: Env) -> Result<(), Error> {
+    pub fn dispute(env: Env, evidence_hash: Option<BytesN<32>>) -> Result<(), Error> {
         let mut order = Self::load(&env)?;
 
         if order.status != OrderStatus::Attested {
@@ -281,10 +290,13 @@ impl EscrowContract {
         order.buyer.require_auth();
 
         order.status = OrderStatus::Disputed;
+        order.evidence_hash = evidence_hash.clone();
         env.storage().instance().set(&DataKey::Order, &order);
         env.storage()
             .instance()
             .extend_ttl(STORAGE_TTL_THRESHOLD, STORAGE_TTL_LEDGERS);
+
+        DisputeEvent { evidence_hash }.publish(&env);
 
         Ok(())
     }

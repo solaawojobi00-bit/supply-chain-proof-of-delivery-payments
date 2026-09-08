@@ -20,6 +20,7 @@ interface RawOrder {
   amount: bigint;
   deadline: bigint;
   status: { tag: string };
+  evidence_hash?: Buffer | Uint8Array | string | null;
 }
 
 interface ContractErrorMessage {
@@ -50,7 +51,9 @@ interface EscrowContract {
   claim(): Promise<AssembledTransaction<ContractResult<null>>>;
   reclaim(): Promise<AssembledTransaction<ContractResult<null>>>;
   cancel(): Promise<AssembledTransaction<ContractResult<null>>>;
-  dispute(): Promise<AssembledTransaction<ContractResult<null>>>;
+  dispute(args?: {
+    evidence_hash?: Buffer | Uint8Array | null;
+  }): Promise<AssembledTransaction<ContractResult<null>>>;
   resolve_dispute(args: {
     release_to_seller: boolean;
   }): Promise<AssembledTransaction<ContractResult<null>>>;
@@ -312,11 +315,16 @@ export async function callCancel(
   }
 }
 
-export async function callDispute(contractId: string, buyer: Keypair): Promise<string | undefined> {
+export async function callDispute(
+  contractId: string,
+  buyer: Keypair,
+  evidenceHash?: string | null,
+): Promise<string | undefined> {
   const start = Date.now();
   try {
     const client = await clientFor(contractId, buyer);
-    const tx = await client.dispute();
+    const hashBuf = evidenceHash ? Buffer.from(evidenceHash, "hex") : null;
+    const tx = await client.dispute({ evidence_hash: hashBuf });
     const sent = await tx.signAndSend();
     unwrap(sent.result);
     const txHash = sent.sendTransactionResponse?.hash;
@@ -325,6 +333,7 @@ export async function callDispute(contractId: string, buyer: Keypair): Promise<s
       type: "contract_call",
       contractId,
       method: "dispute",
+      evidenceHash: evidenceHash ?? undefined,
       txHash,
       duration,
     });
@@ -398,7 +407,10 @@ export interface EscrowRegistryContract {
   claim(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
   reclaim(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
   cancel(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
-  dispute(args: { order_id: bigint }): Promise<AssembledTransaction<ContractResult<null>>>;
+  dispute(args: {
+    order_id: bigint;
+    evidence_hash?: Buffer | Uint8Array | null;
+  }): Promise<AssembledTransaction<ContractResult<null>>>;
   resolve_dispute(args: {
     order_id: bigint;
     release_to_seller: boolean;
@@ -419,6 +431,7 @@ export interface OnChainOrder {
   amount: bigint;
   deadline: bigint;
   status: string;
+  evidence_hash?: string | null;
 }
 
 export async function readOnChainOrder(contractId: string): Promise<OnChainOrder> {
@@ -429,7 +442,14 @@ export async function readOnChainOrder(contractId: string): Promise<OnChainOrder
   });
   const tx = await client.get_order();
   const raw = unwrap(tx.result);
-  return { ...raw, status: raw.status.tag };
+  const evidenceHashHex = raw.evidence_hash
+    ? Buffer.isBuffer(raw.evidence_hash)
+      ? raw.evidence_hash.toString("hex")
+      : typeof raw.evidence_hash === "string"
+        ? raw.evidence_hash
+        : Buffer.from(raw.evidence_hash).toString("hex")
+    : null;
+  return { ...raw, status: raw.status.tag, evidence_hash: evidenceHashHex };
 }
 
 async function registryClientFor(contractId: string, signer: Keypair) {
@@ -656,11 +676,16 @@ export async function callRegistryDispute(
   contractId: string,
   buyer: Keypair,
   orderId: bigint,
+  evidenceHash?: string | null,
 ): Promise<string | undefined> {
   const start = Date.now();
   try {
     const client = await registryClientFor(contractId, buyer);
-    const tx = await client.dispute({ order_id: orderId });
+    const hashBuf = evidenceHash ? Buffer.from(evidenceHash, "hex") : null;
+    const tx = await client.dispute({
+      order_id: orderId,
+      evidence_hash: hashBuf,
+    });
     const sent = await tx.signAndSend();
     unwrap(sent.result);
     const txHash = sent.sendTransactionResponse?.hash;
@@ -670,6 +695,7 @@ export async function callRegistryDispute(
       contractId,
       method: "registry_dispute",
       orderId: orderId.toString(),
+      evidenceHash: evidenceHash ?? undefined,
       txHash,
       duration,
     });
@@ -742,7 +768,14 @@ export async function readOnChainRegistryOrder(
   });
   const tx = await client.get_order({ order_id: orderId });
   const raw = unwrap(tx.result);
-  return { ...raw, status: raw.status.tag };
+  const evidenceHashHex = raw.evidence_hash
+    ? Buffer.isBuffer(raw.evidence_hash)
+      ? raw.evidence_hash.toString("hex")
+      : typeof raw.evidence_hash === "string"
+        ? raw.evidence_hash
+        : Buffer.from(raw.evidence_hash).toString("hex")
+    : null;
+  return { ...raw, status: raw.status.tag, evidence_hash: evidenceHashHex };
 }
 
 async function readOnlyClientFor(contractId: string, publicKey: string) {
@@ -896,9 +929,11 @@ export async function buildRegistryUnsignedCancelTx(
 export async function buildUnsignedDisputeTx(
   contractId: string,
   buyerAddress: string,
+  evidenceHash?: string | null,
 ): Promise<string> {
   const client = await readOnlyClientFor(contractId, buyerAddress);
-  const tx = await client.dispute();
+  const hashBuf = evidenceHash ? Buffer.from(evidenceHash, "hex") : null;
+  const tx = await client.dispute({ evidence_hash: hashBuf });
   return tx.toXDR();
 }
 
@@ -906,9 +941,14 @@ export async function buildRegistryUnsignedDisputeTx(
   contractId: string,
   buyerAddress: string,
   orderId: bigint,
+  evidenceHash?: string | null,
 ): Promise<string> {
   const client = await readOnlyRegistryClientFor(contractId, buyerAddress);
-  const tx = await client.dispute({ order_id: orderId });
+  const hashBuf = evidenceHash ? Buffer.from(evidenceHash, "hex") : null;
+  const tx = await client.dispute({
+    order_id: orderId,
+    evidence_hash: hashBuf,
+  });
   return tx.toXDR();
 }
 
