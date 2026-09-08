@@ -77,7 +77,8 @@ if (process.env.NODE_ENV !== "test") {
     logStructured({
       type: "server_start",
       port: config.port,
-      message: `Escrow backend listening on http://localhost:${config.port}`,
+      network: config.network,
+      message: `Escrow backend listening on http://localhost:${config.port} (network: ${config.network})`,
     });
   });
 }
