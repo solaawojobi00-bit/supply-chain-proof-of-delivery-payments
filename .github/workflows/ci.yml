@@ -54,6 +54,12 @@ jobs:
       - name: Run unit and integration tests with coverage
         run: npm test --prefix backend
 
+      - name: Run OpenAPI sync test harness
+        run: node --test scripts/test-check-openapi-sync.mjs
+
+      - name: Verify OpenAPI spec route synchronization
+        run: node scripts/check-openapi-sync.mjs
+
   audit:
     name: Dependency Audit
     runs-on: ubuntu-latest
