@@ -45,11 +45,13 @@ import {
 import { HttpError } from "./httpError.js";
 import { buyerKeypair, deployerKeypair, findLocalSigner } from "./keys.js";
 import { dispatchWebhook } from "./webhook.js";
+import { getAttestorById } from "./attestorDirectory.js";
 
 export interface CreateOrderInput {
   sellerAddress: string;
   buyerAddress?: string;
   attestorAddress?: string;
+  attestorId?: string;
   attestors?: string[];
   threshold?: number;
   arbiterAddress?: string;
@@ -57,6 +59,23 @@ export interface CreateOrderInput {
   deadlineSeconds: bigint;
   tokenContractId?: string;
   webhookUrl?: string;
+}
+
+export function resolveAttestorList(input: CreateOrderInput): string[] {
+  if (input.attestors && input.attestors.length > 0) {
+    return input.attestors;
+  }
+  if (input.attestorAddress) {
+    return [input.attestorAddress];
+  }
+  if (input.attestorId) {
+    const registered = getAttestorById(input.attestorId);
+    if (!registered) {
+      throw new HttpError(400, `Attestor with id '${input.attestorId}' not found in directory`);
+    }
+    return [registered.address];
+  }
+  throw new HttpError(400, "Either attestorAddress, attestors array, or attestorId is required");
 }
 
 function requireOrder(id: string): OrderRow {
@@ -93,8 +112,7 @@ export async function createOrder(
 ): Promise<OrderRow> {
   const numericId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
   const paymentToken = input.tokenContractId ?? config.paymentTokenContractId;
-  const attestors =
-    input.attestors && input.attestors.length > 0 ? input.attestors : [input.attestorAddress!];
+  const attestors = resolveAttestorList(input);
   const threshold = input.threshold ?? 1;
   const primaryAttestor = attestors[0];
   const arbiterAddress = input.arbiterAddress ?? deployerKeypair.publicKey();
@@ -362,8 +380,7 @@ export async function buildUnsignedCreateOrder(
 ): Promise<{ unsignedTxXdr: string; order: OrderRow }> {
   const numericId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
   const paymentToken = input.tokenContractId ?? config.paymentTokenContractId;
-  const attestors =
-    input.attestors && input.attestors.length > 0 ? input.attestors : [input.attestorAddress!];
+  const attestors = resolveAttestorList(input);
   const threshold = input.threshold ?? 1;
   const primaryAttestor = attestors[0];
   const arbiterAddress = input.arbiterAddress ?? deployerKeypair.publicKey();

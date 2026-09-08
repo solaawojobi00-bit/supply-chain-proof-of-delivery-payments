@@ -289,6 +289,25 @@ The frontend application (`frontend/`) provides an interactive interface for buy
    - **Seller View**: Filtered dashboard listing claimable payments with one-click escrow claiming once delivery is confirmed.
    - **Explorer & Inspector**: Global order feed with deep on-chain state inspection and transaction hashes.
 
+## Attestor Directory & Reputation Subsystem (`backend/src/attestorDirectory.ts`)
+
+To establish trust without centralized identity providers, the system features a transparent attestor directory with an objective, order-derived reputation scoring engine:
+
+1. **Attestor Registration (`POST /attestors`)**:
+   - Attestors publish their service metadata: Stellar address (`G...`), organization name, description, geographic coverage region (`coverageArea`), and service fee basis points (`feeBps`).
+2. **Dynamic Reputation Scoring (Derived from Real Order History)**:
+   - Reputation metrics are computed on-the-fly against the `orders` SQLite database:
+     - `totalAssigned`: Count of orders where the attestor was designated.
+     - `totalAttested`: Count of orders where the attestor submitted delivery confirmation.
+     - `successfulClaims`: Count of attested orders successfully claimed by the seller.
+     - `reclaimedAfterExpiry`: Count of orders expired and reclaimed by buyer without attestation.
+     - `disputedOrders`: Count of attestations disputed by buyers.
+     - `successRate`: Proportion of successful claims relative to assignments.
+     - `reputationScore`: 0–100 composite index balancing claim success rate (60%), non-expiration rate (20%), dispute penalty (-30%), and verified order volume bonus (+10 pts).
+3. **Directory Discovery (`GET /attestors`)**:
+   - Buyers and marketplaces can query available attestors filtered by coverage area and minimum reputation score, sorting high-reputation verifiers to the top.
+   - `POST /orders` accepts `attestorId` (referencing a directory entry) in place of raw Stellar addresses.
+
 ## Development, CI/CD & Project Hygiene
 
 To ensure high reliability, security, and supply-chain integrity, the repository employs automated quality gates and hygiene pipelines:

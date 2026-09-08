@@ -13,6 +13,90 @@ servers:
 security: []
 
 paths:
+  /attestors:
+    post:
+      summary: Register as an attestor
+      description: Registers a new delivery attestor in the public directory or updates an existing registration.
+      operationId: registerAttestor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterAttestorRequest"
+      responses:
+        "201":
+          description: Attestor registered successfully with computed reputation summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Attestor"
+        "400":
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      summary: List registered attestors
+      description: Returns all active registered attestors with dynamically computed reputation summaries, sorted by score.
+      operationId: listAttestors
+      parameters:
+        - name: coverageArea
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by geographic service area
+        - name: minScore
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: Filter by minimum reputation score (0 - 100)
+        - name: active
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: Filter active attestors (defaults to true)
+      responses:
+        "200":
+          description: List of registered attestors with reputation summaries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Attestor"
+
+  /attestors/{id}:
+    get:
+      summary: Get attestor profile
+      description: Returns a single registered attestor profile and detailed reputation breakdown.
+      operationId: getAttestor
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Attestor directory identifier
+      responses:
+        "200":
+          description: Attestor profile and reputation summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Attestor"
+        "404":
+          description: Attestor not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /orders:
     post:
       summary: Create a new escrow order
@@ -559,11 +643,145 @@ components:
           type: string
           description: Optional Stellar contract address (C...) of the payment token; defaults to configured native XLM asset if omitted
           example: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+        attestorId:
+          type: string
+          description: Optional identifier of a registered attestor in the directory to use instead of raw address
+          example: "550e8400-e29b-41d4-a716-446655440000"
         webhookUrl:
           type: string
           format: uri
           description: Optional HTTP/HTTPS webhook URL to receive real-time notifications on order state transitions
           example: "https://api.merchant.com/webhooks/escrow"
+
+    RegisterAttestorRequest:
+      type: object
+      required:
+        - address
+        - name
+      properties:
+        address:
+          type: string
+          description: Stellar public key address (G...) of the attestor
+          example: "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"
+        name:
+          type: string
+          description: Human-readable name or company title
+          example: "Global Freight Verifiers"
+        description:
+          type: string
+          description: Optional service description or credentials
+          example: "Certified international logistics and warehouse verification services."
+        coverageArea:
+          type: string
+          description: Optional geographic coverage area
+          example: "North America & Europe"
+        feeBps:
+          type: integer
+          description: Optional service fee in basis points (100 bps = 1%)
+          example: 25
+
+    AttestorReputationSummary:
+      type: object
+      required:
+        - totalAssigned
+        - totalAttested
+        - successfulClaims
+        - reclaimedAfterExpiry
+        - disputedOrders
+        - resolvedDisputes
+        - successRate
+        - disputeRate
+        - reputationScore
+      properties:
+        totalAssigned:
+          type: integer
+          description: Total number of orders assigned to this attestor
+          example: 45
+        totalAttested:
+          type: integer
+          description: Total number of orders where this attestor submitted delivery confirmation
+          example: 42
+        successfulClaims:
+          type: integer
+          description: Number of orders successfully attested leading to seller fund claims
+          example: 41
+        reclaimedAfterExpiry:
+          type: integer
+          description: Number of orders expired and reclaimed by buyer without delivery confirmation
+          example: 3
+        disputedOrders:
+          type: integer
+          description: Number of orders that entered dispute arbitration
+          example: 1
+        resolvedDisputes:
+          type: integer
+          description: Number of disputed orders resolved by arbiter
+          example: 1
+        successRate:
+          type: number
+          description: Ratio of successful claims to total assigned orders (0.0 to 1.0)
+          example: 0.9111
+        disputeRate:
+          type: number
+          description: Ratio of disputed orders to total assigned orders (0.0 to 1.0)
+          example: 0.0222
+        reputationScore:
+          type: integer
+          description: Composite reputation score (0 - 100) calculated from real order history
+          example: 94
+
+    Attestor:
+      type: object
+      required:
+        - id
+        - address
+        - name
+        - feeBps
+        - active
+        - reputation
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          description: Unique attestor identifier
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        address:
+          type: string
+          description: Stellar public address (G...)
+          example: "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"
+        name:
+          type: string
+          description: Organization or operator name
+          example: "Global Freight Verifiers"
+        description:
+          type: string
+          nullable: true
+          description: Optional description
+          example: "Certified logistics verification"
+        coverageArea:
+          type: string
+          nullable: true
+          description: Geographic coverage region
+          example: "North America & Europe"
+        feeBps:
+          type: integer
+          description: Service fee in basis points
+          example: 25
+        active:
+          type: boolean
+          description: Whether the attestor is currently active in the directory
+          example: true
+        reputation:
+          $ref: "#/components/schemas/AttestorReputationSummary"
+        createdAt:
+          type: string
+          format: date-time
+          description: ISO timestamp of registration
+        updatedAt:
+          type: string
+          format: date-time
+          description: ISO timestamp of last update
 
     AttestOrderRequest:
       type: object

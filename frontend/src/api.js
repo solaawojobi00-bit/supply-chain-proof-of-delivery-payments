@@ -73,6 +73,39 @@ export async function getOrder(id) {
 }
 
 /**
+ * Fetch registered attestors with calculated reputation metrics
+ * @param {object} [filters] - { coverageArea, minScore, active }
+ */
+export async function getAttestors(filters = {}) {
+  const params = new URLSearchParams();
+  if (filters.coverageArea) params.set("coverageArea", filters.coverageArea);
+  if (typeof filters.minScore === "number")
+    params.set("minScore", String(filters.minScore));
+  if (filters.active !== undefined)
+    params.set("active", String(filters.active));
+
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest(`/attestors${query}`, { method: "GET" });
+}
+
+/**
+ * Fetch single attestor profile with detailed reputation summary
+ */
+export async function getAttestor(id) {
+  return apiRequest(`/attestors/${encodeURIComponent(id)}`, { method: "GET" });
+}
+
+/**
+ * Register a new attestor in the directory
+ */
+export async function registerAttestorApi(payload) {
+  return apiRequest("/attestors", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
  * Create a new escrow order with client-side wallet signing
  * @param {object} orderData - { buyerAddress, sellerAddress, attestorAddress, amountStroops, deadlineSeconds, tokenContractId, webhookUrl }
  * @param {object} [options] - { unsigned, roleToken }
