@@ -74,9 +74,11 @@ stellar contract id asset --asset native --network testnet
 ```bash
 cd backend
 cp .env.example .env
-# fill in ESCROW_WASM_HASH, PAYMENT_TOKEN_CONTRACT_ID (native asset id above),
+# Set STELLAR_NETWORK (testnet | local | mainnet - defaults to testnet).
+# Fill in ESCROW_WASM_HASH, PAYMENT_TOKEN_CONTRACT_ID (native asset id above),
 # four secret keys from `stellar keys show <name>`, and optional CORS_ALLOWED_ORIGINS
-# (e.g. CORS_ALLOWED_ORIGINS=http://localhost:5173 to allow frontend cross-origin access)
+# (e.g. CORS_ALLOWED_ORIGINS=http://localhost:5173 to allow frontend cross-origin access).
+# Note: Targeting mainnet requires setting ALLOW_MAINNET=true as an explicit safety guardrail.
 npm install
 npm run dev
 ```
