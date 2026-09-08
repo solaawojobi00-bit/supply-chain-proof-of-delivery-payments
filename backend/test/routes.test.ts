@@ -744,9 +744,7 @@ describe("API Routes (routes.ts)", () => {
       expect(attestorOrders.some((o) => o.id === created.id)).toBe(true);
 
       // Filter by generic address
-      const addrOrdersRes = await fetch(
-        `${baseUrl}/orders?address=${encodeURIComponent(buyerPk)}`,
-      );
+      const addrOrdersRes = await fetch(`${baseUrl}/orders?address=${encodeURIComponent(buyerPk)}`);
       expect(addrOrdersRes.status).toBe(200);
       const addrOrders = (await addrOrdersRes.json()) as any[];
       expect(addrOrders.some((o) => o.id === created.id)).toBe(true);
@@ -767,4 +765,3 @@ describe("API Routes (routes.ts)", () => {
     });
   });
 });
-
