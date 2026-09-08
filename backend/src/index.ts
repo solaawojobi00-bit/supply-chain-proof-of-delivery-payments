@@ -1,10 +1,12 @@
 import express, { type NextFunction, type Request, type Response } from "express";
+import helmet from "helmet";
 import { config } from "./config.js";
 import { HttpError } from "./httpError.js";
 import { logStructured, requestLogger } from "./logger.js";
 import { router } from "./routes.js";
 
 export const app = express();
+app.use(helmet());
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
