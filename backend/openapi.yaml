@@ -13,6 +13,23 @@ servers:
 security: []
 
 paths:
+  /health:
+    get:
+      summary: Service health check
+      description: Returns health status of the backend API service.
+      operationId: getHealth
+      responses:
+        "200":
+          description: API service is operational
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
   /attestors:
     post:
       summary: Register as an attestor
