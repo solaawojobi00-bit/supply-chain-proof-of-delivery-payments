@@ -26,6 +26,16 @@ export function parseCorsOrigins(origins?: string): string[] {
     .filter(Boolean);
 }
 
+export function parseTrustProxy(value?: string): boolean | number | string {
+  if (value === undefined || value.trim() === "") return false;
+  const trimmed = value.trim().toLowerCase();
+  if (trimmed === "true" || trimmed === "1") return true;
+  if (trimmed === "false" || trimmed === "0") return false;
+  const num = Number(value);
+  if (!isNaN(num)) return num;
+  return value.trim();
+}
+
 export function resolveConfig(env: NodeJS.ProcessEnv = process.env) {
   const rawNetwork = (env.STELLAR_NETWORK || "testnet").toLowerCase().trim();
   if (rawNetwork !== "testnet" && rawNetwork !== "mainnet" && rawNetwork !== "local") {
@@ -78,6 +88,11 @@ export function resolveConfig(env: NodeJS.ProcessEnv = process.env) {
     arbiterApiKey: env.ARBITER_API_KEY ?? "demo-arbiter-token",
     adminApiKey: env.ADMIN_API_KEY ?? "demo-admin-token",
     corsAllowedOrigins: parseCorsOrigins(env.CORS_ALLOWED_ORIGINS),
+    rateLimitEnabled: env.RATE_LIMIT_ENABLED !== "false" && env.RATE_LIMIT_ENABLED !== "0",
+    rateLimitWindowMs: Number(env.RATE_LIMIT_WINDOW_MS ?? 60000),
+    rateLimitMaxMutating: Number(env.RATE_LIMIT_MAX_MUTATING ?? 30),
+    rateLimitMaxGeneral: Number(env.RATE_LIMIT_MAX_GENERAL ?? 300),
+    trustProxy: parseTrustProxy(env.TRUST_PROXY),
     port: Number(env.PORT ?? 3000),
     dbPath: env.DB_PATH ?? "./data/orders.sqlite",
   };
