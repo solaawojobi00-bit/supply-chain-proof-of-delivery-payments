@@ -203,11 +203,44 @@ export const buildTxSchema = z.object({
   releaseToSeller: z.boolean().optional(),
 });
 
+export const iotEventSchema = z.object({
+  orderId: z.string().uuid("orderId must be a valid UUID"),
+  deviceId: z.string().min(1, "deviceId is required"),
+  eventType: z.enum(["geofence_entry", "rfid_scan", "telemetry_reading"], {
+    errorMap: () => ({
+      message: "eventType must be 'geofence_entry', 'rfid_scan', or 'telemetry_reading'",
+    }),
+  }),
+  coordinates: z
+    .object({
+      latitude: z.number().min(-90).max(90),
+      longitude: z.number().min(-180).max(180),
+    })
+    .optional(),
+  targetCoordinates: z
+    .object({
+      latitude: z.number().min(-90).max(90),
+      longitude: z.number().min(-180).max(180),
+      maxRadiusMeters: z.number().positive().optional(),
+    })
+    .optional(),
+  scanCode: z.string().optional(),
+  timestamp: z.union([z.string(), z.number()]),
+  attestorAddress: z
+    .string()
+    .refine(isValidStellarAddress, {
+      message: "attestorAddress must be a valid Stellar public key (G...)",
+    })
+    .optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
 export type CreateOrderBody = z.infer<typeof createOrderSchema>;
 export type AttestOrderBody = z.infer<typeof attestOrderSchema>;
 export type ResolveDisputeBody = z.infer<typeof resolveDisputeSchema>;
 export type SubmitSignedTxBody = z.infer<typeof submitSignedTxSchema>;
 export type BuildTxBody = z.infer<typeof buildTxSchema>;
+export type IoTEventBody = z.infer<typeof iotEventSchema>;
 
 export function formatZodError(error: z.ZodError): string {
   const issues = error.issues || (error as unknown as { errors?: z.ZodIssue[] }).errors || [];

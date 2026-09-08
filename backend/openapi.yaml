@@ -591,8 +591,64 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SubmitSignedTxResponse"
+  /integrations/iot/events:
+    post:
+      summary: Ingest GPS/IoT telemetry event and trigger automated attestation
+      description: Receives authenticated telemetry (geofence arrival, RFID scan, or sensor telemetry), verifies authenticity via HMAC-SHA256 signature or shared secret, and triggers on-chain delivery confirmation using the order's configured attestor signer.
+      operationId: ingestIoTEvent
+      parameters:
+        - name: x-iot-signature
+          in: header
+          required: false
+          description: HMAC-SHA256 hex digest of payload using pre-shared IoT webhook secret
+          schema:
+            type: string
+            example: "sha256=d3b07384d113edec49eaa6238ad5ff00"
+        - name: x-iot-secret
+          in: header
+          required: false
+          description: Pre-shared static device/platform authentication token
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IoTTelemetryEventRequest"
+      responses:
+        "200":
+          description: Telemetry validated and delivery confirmation attested on-chain
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IoTAttestationResponse"
         "400":
-          description: Invalid signed XDR or submission error
+          description: Invalid telemetry payload or missing required parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized; missing or invalid device signature/secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Order state conflict (already attested or expired)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Geofence validation failed (device outside allowed radius)
           content:
             application/json:
               schema:
@@ -1157,6 +1213,108 @@ components:
           type: string
           description: On-chain transaction status
           example: "SUCCESS"
+        order:
+          $ref: "#/components/schemas/Order"
+
+    IoTTelemetryEventRequest:
+      type: object
+      required:
+        - orderId
+        - deviceId
+        - eventType
+        - timestamp
+      properties:
+        orderId:
+          type: string
+          format: uuid
+          description: UUID of the order to confirm delivery for
+          example: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+        deviceId:
+          type: string
+          description: Hardware/software telemetry device identifier
+          example: "TRUCKER-GPS-UNIT-942"
+        eventType:
+          type: string
+          enum:
+            - geofence_entry
+            - rfid_scan
+            - telemetry_reading
+          description: Type of telemetry event triggering delivery confirmation
+          example: "geofence_entry"
+        coordinates:
+          type: object
+          required:
+            - latitude
+            - longitude
+          properties:
+            latitude:
+              type: number
+              example: 37.7749
+            longitude:
+              type: number
+              example: -122.4194
+        targetCoordinates:
+          type: object
+          required:
+            - latitude
+            - longitude
+          properties:
+            latitude:
+              type: number
+              example: 37.7750
+            longitude:
+              type: number
+              example: -122.4195
+            maxRadiusMeters:
+              type: number
+              description: Maximum allowable distance in meters from target coordinates (default 150m)
+              example: 150
+        scanCode:
+          type: string
+          description: Scanned RFID / NFC / QR code identifier
+          example: "SCAN-PALLET-9921"
+        timestamp:
+          oneOf:
+            - type: string
+            - type: number
+          description: ISO-8601 string or epoch timestamp of telemetry event
+          example: "2026-09-08T10:00:00Z"
+        attestorAddress:
+          type: string
+          description: Optional specific attestor Stellar public key if order has multi-attestor quorum
+          example: "GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI"
+        metadata:
+          type: object
+          description: Arbitrary device telemetry payload (temperature, humidity, battery level)
+          additionalProperties: true
+
+    IoTAttestationResponse:
+      type: object
+      required:
+        - success
+        - orderId
+        - deviceId
+        - eventType
+        - txHash
+        - order
+      properties:
+        success:
+          type: boolean
+          example: true
+        orderId:
+          type: string
+          format: uuid
+          example: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+        deviceId:
+          type: string
+          example: "TRUCKER-GPS-UNIT-942"
+        eventType:
+          type: string
+          example: "geofence_entry"
+        txHash:
+          type: string
+          description: On-chain Stellar transaction hash resulting from automated attest call
+          example: "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
         order:
           $ref: "#/components/schemas/Order"
 
