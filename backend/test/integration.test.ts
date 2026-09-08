@@ -95,8 +95,9 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
     it("GET /orders returns existing list of orders", async () => {
       const res = await fetch(`${baseUrl}/orders`);
       expect(res.status).toBe(200);
-      const list = (await res.json()) as unknown[];
-      expect(Array.isArray(list)).toBe(true);
+      const data = (await res.json()) as any;
+      expect(data).toHaveProperty("orders");
+      expect(Array.isArray(data.orders)).toBe(true);
     });
   });
 
@@ -266,7 +267,8 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
 
       // Verify in order list
       const listRes = await fetch(`${baseUrl}/orders`);
-      const allOrders = (await listRes.json()) as Array<{ id: string; status: string }>;
+      const listData = (await listRes.json()) as any;
+      const allOrders = listData.orders as Array<{ id: string; status: string }>;
       const matching = allOrders.find((o) => o.id === created.id);
       expect(matching?.status).toBe("Reclaimed");
     });

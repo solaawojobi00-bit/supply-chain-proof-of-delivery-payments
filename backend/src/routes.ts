@@ -29,6 +29,7 @@ import {
   disputeOrderSchema,
   formatZodError,
   iotEventSchema,
+  listOrdersQuerySchema,
   registerAttestorSchema,
   resolveDisputeSchema,
   submitSignedTxSchema,
@@ -276,75 +277,16 @@ router.post(
 router.get(
   "/orders",
   asyncHandler(async (req, res) => {
-    let orders = getAllOrders();
-    const { role, address, buyer, seller, attestor, arbiter, status } = req.query as Record<
-      string,
-      string | undefined
-    >;
-
-    if (status) {
-      orders = orders.filter((o) => o.status.toLowerCase() === status.toLowerCase());
+    const parseResult = listOrdersQuerySchema.safeParse(req.query);
+    if (!parseResult.success) {
+      throw new HttpError(400, formatZodError(parseResult.error));
     }
-
-    if (buyer) {
-      orders = orders.filter((o) => o.buyer_address === buyer);
-    }
-    if (seller) {
-      orders = orders.filter((o) => o.seller_address === seller);
-    }
-    if (attestor) {
-      orders = orders.filter((o) => {
-        if (o.attestor_address === attestor) return true;
-        try {
-          const list = JSON.parse(o.attestors || "[]");
-          return Array.isArray(list) && list.includes(attestor);
-        } catch {
-          return false;
-        }
-      });
-    }
-    if (arbiter) {
-      orders = orders.filter((o) => o.arbiter_address === arbiter);
-    }
-
-    if (role && address) {
-      if (role === "buyer") {
-        orders = orders.filter((o) => o.buyer_address === address);
-      } else if (role === "seller") {
-        orders = orders.filter((o) => o.seller_address === address);
-      } else if (role === "attestor") {
-        orders = orders.filter((o) => {
-          if (o.attestor_address === address) return true;
-          try {
-            const list = JSON.parse(o.attestors || "[]");
-            return Array.isArray(list) && list.includes(address);
-          } catch {
-            return false;
-          }
-        });
-      } else if (role === "arbiter") {
-        orders = orders.filter((o) => o.arbiter_address === address);
-      }
-    } else if (address) {
-      orders = orders.filter((o) => {
-        if (
-          o.buyer_address === address ||
-          o.seller_address === address ||
-          o.attestor_address === address ||
-          o.arbiter_address === address
-        ) {
-          return true;
-        }
-        try {
-          const list = JSON.parse(o.attestors || "[]");
-          return Array.isArray(list) && list.includes(address);
-        } catch {
-          return false;
-        }
-      });
-    }
-
-    res.json(orders.map(serialize));
+    const query = parseResult.data;
+    const result = getAllOrders(query);
+    res.json({
+      orders: result.orders.map(serialize),
+      next_cursor: result.next_cursor,
+    });
   }),
 );
 
