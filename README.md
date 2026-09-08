@@ -22,15 +22,18 @@ dispute arbitration for contested attestations. See the
 ## Repo layout
 
 ```
-contracts/escrow/        Soroban escrow contract (Rust)
-backend/                 REST API + order tracking (Node/TypeScript)
-frontend/                Web frontend with Freighter wallet connect (Vite/Vanilla JS/CSS)
-scripts/                 Hygiene & audit tools (e.g. unified dependency audit gate)
-.github/workflows/       CI, CodeQL, Gitleaks, and Release workflows
-.github/dependabot.yml   Automated dependency update configuration
+contracts/escrow/          Per-order Soroban escrow contract (Rust - dual-supported reference)
+contracts/escrow-registry/ Shared Soroban escrow registry (Rust - canonical production topology)
+backend/                   REST API + order tracking (Node/TypeScript)
+frontend/                  Web frontend with Freighter wallet connect (Vite/Vanilla JS/CSS)
+scripts/                   Hygiene & audit tools (e.g. unified dependency audit gate)
+.github/workflows/         CI, CodeQL, Gitleaks, and Release workflows
+.github/dependabot.yml     Automated dependency update configuration
 PRD.md
 ARCHITECTURE.md
 ```
+
+> **Contract Topology Note**: `contracts/escrow-registry` is the canonical production contract topology, while `contracts/escrow` is maintained as a dual-supported reference implementation with strict feature parity. See [ARCHITECTURE.md](ARCHITECTURE.md#contract-design-contractsescrow-and-contractsescrow-registry) for details and rationale.
 
 ## Prerequisites
 
