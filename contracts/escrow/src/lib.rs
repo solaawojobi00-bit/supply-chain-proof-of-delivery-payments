@@ -11,6 +11,13 @@ pub struct RotateAttestorEvent {
     pub new_attestor: Address,
 }
 
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExtendDeadlineEvent {
+    pub old_deadline: u64,
+    pub new_deadline: u64,
+}
+
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OrderStatus {
@@ -59,6 +66,7 @@ pub enum Error {
     AlreadyConfirmed = 11,
     AttestorNotFound = 12,
     AttestorAlreadyExists = 13,
+    DeadlineNotExtended = 14,
 }
 
 const LEDGERS_PER_DAY: u32 = 17280; // ~5s ledger close time
@@ -217,6 +225,44 @@ impl EscrowContract {
         RotateAttestorEvent {
             old_attestor,
             new_attestor,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Extends the deadline for an order.
+    /// Requires authorization from both `buyer` and `seller`.
+    /// `new_deadline` must be strictly greater than the current `deadline`.
+    /// Valid only while the order is in a pre-terminal status (not `Claimed`, `Reclaimed`, or `Cancelled`).
+    pub fn extend_deadline(env: Env, new_deadline: u64) -> Result<(), Error> {
+        let mut order = Self::load(&env)?;
+
+        if order.status == OrderStatus::Claimed
+            || order.status == OrderStatus::Reclaimed
+            || order.status == OrderStatus::Cancelled
+        {
+            return Err(Error::WrongStatus);
+        }
+
+        if new_deadline <= order.deadline {
+            return Err(Error::DeadlineNotExtended);
+        }
+
+        order.buyer.require_auth();
+        order.seller.require_auth();
+
+        let old_deadline = order.deadline;
+        order.deadline = new_deadline;
+
+        env.storage().instance().set(&DataKey::Order, &order);
+        env.storage()
+            .instance()
+            .extend_ttl(STORAGE_TTL_THRESHOLD, STORAGE_TTL_LEDGERS);
+
+        ExtendDeadlineEvent {
+            old_deadline,
+            new_deadline,
         }
         .publish(&env);
 
