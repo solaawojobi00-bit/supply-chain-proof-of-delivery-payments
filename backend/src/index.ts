@@ -1,3 +1,4 @@
+import cors, { type CorsOptions } from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
 import helmet from "helmet";
 import { config } from "./config.js";
@@ -5,21 +6,44 @@ import { HttpError } from "./httpError.js";
 import { logStructured, requestLogger } from "./logger.js";
 import { router } from "./routes.js";
 
+export const allowedCorsHeaders = [
+  "Content-Type",
+  "Authorization",
+  "x-authorization",
+  "x-api-key",
+  "x-auth-token",
+  "x-role-key",
+  "x-role-token",
+  "idempotency-key",
+  "x-idempotency-key",
+  "x-unsigned",
+  "x-iot-signature",
+  "x-iot-secret",
+];
+
+export function createCorsOptions(
+  allowedOrigins: string[] = config.corsAllowedOrigins,
+): CorsOptions {
+  return {
+    origin: (origin, callback) => {
+      // Allow requests with no Origin header (e.g. server-to-server, curl, non-browser clients)
+      if (!origin) {
+        return callback(null, true);
+      }
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(null, false);
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: allowedCorsHeaders,
+    credentials: true,
+  };
+}
+
 export const app = express();
 app.use(helmet());
-app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.header(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, x-api-key, x-auth-token, x-role-key, x-role-token, idempotency-key, x-idempotency-key, x-unsigned",
-  );
-  if (req.method === "OPTIONS") {
-    res.sendStatus(204);
-    return;
-  }
-  next();
-});
+app.use(cors(createCorsOptions()));
 app.use(express.json());
 app.use(requestLogger);
 app.use(router);

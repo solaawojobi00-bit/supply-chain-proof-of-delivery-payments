@@ -75,7 +75,8 @@ stellar contract id asset --asset native --network testnet
 cd backend
 cp .env.example .env
 # fill in ESCROW_WASM_HASH, PAYMENT_TOKEN_CONTRACT_ID (native asset id above),
-# and the four secret keys from `stellar keys show <name>`
+# four secret keys from `stellar keys show <name>`, and optional CORS_ALLOWED_ORIGINS
+# (e.g. CORS_ALLOWED_ORIGINS=http://localhost:5173 to allow frontend cross-origin access)
 npm install
 npm run dev
 ```
@@ -104,7 +105,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173` in your browser. Ensure the backend is running on `http://localhost:3000`.
+Open `http://localhost:5173` in your browser. Ensure the backend is running on `http://localhost:3000` (and `CORS_ALLOWED_ORIGINS` includes `http://localhost:5173` in `backend/.env`).
 
 ### Features & Role Portals
 - **🛒 Buyer Portal**:
