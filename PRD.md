@@ -89,9 +89,12 @@ buildable v1.
   attestation after the fact (e.g. "the attestor was wrong/colluding"),
   including arbitration panels, staking/slashing for dishonest attestors, or
   appeals processes.
-- **Attestor reputation / marketplace**: discovering, rating, or bonding
-  attestors. Phase 1 assumes the attestor is already known and agreed upon by
-  buyer and seller off-chain.
+- **Attestor Directory & Discovery**: Discovering, registering, and tracking
+  attestor reliability. A lightweight public directory (`/attestors`) tracks
+  registered verifiers and derives objective reputation summaries (attestations,
+  successful claims, expiration rates, disputes, and composite reputation scores)
+  directly from on-chain order history. Buyers can reference attestors by directory
+  ID (`attestorId`) or raw Stellar address.
 - **Multi-asset / multi-currency support**: Phase 1 targets a single asset
   (XLM or one test credit asset) to keep the core flow provable; broader
   asset support is a straightforward but deferred extension.

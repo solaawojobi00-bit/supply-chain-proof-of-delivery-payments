@@ -13,6 +13,9 @@ import {
   attestOrder,
   claimOrder,
   submitSignedTx,
+  getAttestors,
+  getAttestor,
+  registerAttestorApi,
 } from "../src/api.js";
 import {
   renderBuyerOrders,
@@ -274,6 +277,32 @@ describe("Frontend Client & Wallet Integration Test Suite (Issue #16)", () => {
       expect(firstUrl).toContain(`/orders/${mockOrder.id}/claim?unsigned=true`);
       expect(firstOpts.headers["Authorization"]).toBe(
         "Bearer mock-seller-token",
+      );
+    });
+
+    it("getAttestors fetches registered attestors with reputation", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => [
+          {
+            id: "attestor-1",
+            address: attestorAddress,
+            name: "Verified Logistics",
+            reputation: { reputationScore: 98, totalAttested: 20 },
+          },
+        ],
+      });
+
+      const attestors = await getAttestors({
+        coverageArea: "Europe",
+        minScore: 90,
+      });
+      expect(attestors).toHaveLength(1);
+      expect(attestors[0].name).toBe("Verified Logistics");
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.stringContaining("/attestors?coverageArea=Europe&minScore=90"),
+        expect.any(Object),
       );
     });
   });

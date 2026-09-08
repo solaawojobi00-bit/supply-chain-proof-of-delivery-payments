@@ -89,18 +89,24 @@ export const createOrderSchema = z
         message: "buyerAddress must be a valid Stellar public key (G...)",
       })
       .optional(),
+    attestorId: z.string().min(1, { message: "attestorId cannot be empty" }).optional(),
     webhookUrl: z.string().url({ message: "webhookUrl must be a valid URL" }).optional(),
   })
   .refine(
-    (data) => Boolean(data.attestors && data.attestors.length > 0) || Boolean(data.attestorAddress),
+    (data) =>
+      Boolean(data.attestors && data.attestors.length > 0) ||
+      Boolean(data.attestorAddress) ||
+      Boolean(data.attestorId),
     {
-      message: "Either attestorAddress or non-empty attestors array is required",
+      message: "Either attestorAddress, non-empty attestors array, or attestorId is required",
       path: ["attestors"],
     },
   )
   .refine(
     (data) => {
-      const list = data.attestors ?? (data.attestorAddress ? [data.attestorAddress] : []);
+      const list =
+        data.attestors ??
+        (data.attestorAddress || data.attestorId ? [data.attestorAddress || data.attestorId!] : []);
       if (data.threshold !== undefined) {
         return data.threshold >= 1 && data.threshold <= list.length;
       }
@@ -111,6 +117,47 @@ export const createOrderSchema = z
       path: ["threshold"],
     },
   );
+
+export const registerAttestorSchema = z.object({
+  address: z
+    .string({ message: "address is required" })
+    .min(1, { message: "address is required" })
+    .refine(isValidStellarAddress, {
+      message: "address must be a valid Stellar public key (G...)",
+    }),
+  name: z
+    .string({ message: "name is required" })
+    .trim()
+    .min(2, { message: "name must be at least 2 characters" })
+    .max(100, { message: "name must be at most 100 characters" }),
+  description: z
+    .string()
+    .trim()
+    .max(500, { message: "description must be at most 500 characters" })
+    .optional(),
+  coverageArea: z
+    .string()
+    .trim()
+    .max(200, { message: "coverageArea must be at most 200 characters" })
+    .optional(),
+  feeBps: z
+    .number()
+    .int()
+    .min(0, { message: "feeBps must be >= 0" })
+    .max(10000, { message: "feeBps must be <= 10000" })
+    .optional(),
+});
+
+export const updateAttestorSchema = z.object({
+  name: z.string().trim().min(2).max(100).optional(),
+  description: z.string().trim().max(500).optional(),
+  coverageArea: z.string().trim().max(200).optional(),
+  feeBps: z.number().int().min(0).max(10000).optional(),
+  active: z.boolean().optional(),
+});
+
+export type RegisterAttestorBody = z.infer<typeof registerAttestorSchema>;
+export type UpdateAttestorBody = z.infer<typeof updateAttestorSchema>;
 
 export const attestOrderSchema = z.object({
   attestorAddress: z

@@ -22,21 +22,61 @@ import {
   resolveDispute,
   submitSignedTx,
 } from "./orderService.js";
-import { getOrderByIdempotencyKey, type OrderRow } from "./db.js";
 import {
   attestOrderSchema,
   buildTxSchema,
   createOrderSchema,
   formatZodError,
+  registerAttestorSchema,
   resolveDisputeSchema,
   submitSignedTxSchema,
 } from "./schemas.js";
+import { getAttestorById, listAttestors, registerAttestor } from "./attestorDirectory.js";
+import { getOrderByIdempotencyKey, type OrderRow } from "./db.js";
 
 export const router = Router();
 
 router.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok" });
 });
+
+router.post(
+  "/attestors",
+  asyncHandler(async (req, res) => {
+    const parseResult = registerAttestorSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      throw new HttpError(400, formatZodError(parseResult.error));
+    }
+    const registered = registerAttestor(parseResult.data);
+    res.status(201).json(registered);
+  }),
+);
+
+router.get(
+  "/attestors",
+  asyncHandler(async (req, res) => {
+    const { coverageArea, minScore, active } = req.query as Record<string, string | undefined>;
+    const minScoreNum = minScore ? Number(minScore) : undefined;
+    const activeOnly = active !== undefined ? active === "true" : true;
+    const attestors = listAttestors({
+      coverageArea,
+      minScore: !isNaN(minScoreNum!) ? minScoreNum : undefined,
+      activeOnly,
+    });
+    res.json(attestors);
+  }),
+);
+
+router.get(
+  "/attestors/:id",
+  asyncHandler(async (req, res) => {
+    const attestor = getAttestorById(String(req.params.id));
+    if (!attestor) {
+      throw new HttpError(404, `Attestor ${req.params.id} not found`);
+    }
+    res.json(attestor);
+  }),
+);
 
 function serialize(order: OrderRow) {
   const attestors: string[] = order.attestors
@@ -113,6 +153,7 @@ router.post(
       sellerAddress,
       buyerAddress,
       attestorAddress,
+      attestorId,
       attestors,
       threshold,
       arbiterAddress,
@@ -125,6 +166,7 @@ router.post(
       sellerAddress,
       buyerAddress,
       attestorAddress,
+      attestorId,
       attestors,
       threshold,
       arbiterAddress,
@@ -154,6 +196,7 @@ router.post(
           sellerAddress,
           buyerAddress,
           attestorAddress,
+          attestorId,
           attestors,
           threshold,
           arbiterAddress,
@@ -178,6 +221,7 @@ router.post(
         sellerAddress,
         buyerAddress,
         attestorAddress,
+        attestorId,
         attestors,
         threshold,
         arbiterAddress,
