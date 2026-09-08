@@ -483,3 +483,178 @@ fn test_cancel_requires_both_auths() {
     assert!(result.is_ok());
     assert_eq!(client.get_order().status, OrderStatus::Cancelled);
 }
+
+#[test]
+fn test_rotate_attestor_success() {
+    let t = setup(86400);
+
+    let new_attestor = Address::generate(&t.env);
+    t.client.rotate_attestor(&t.attestor3, &new_attestor);
+
+    let order = t.client.get_order();
+    assert!(!order.attestors.contains(&t.attestor3));
+    assert!(order.attestors.contains(&new_attestor));
+    assert_eq!(order.attestors.len(), 3);
+
+    // Old attestor can no longer attest
+    let res = t.client.try_attest(&t.attestor3);
+    assert_eq!(res, Err(Ok(Error::AttestorNotAuthorized)));
+
+    // Attestor1 and new_attestor confirm to reach 2-of-3 threshold
+    t.client.attest(&t.attestor1);
+    t.client.attest(&new_attestor);
+    assert_eq!(t.client.get_order().status, OrderStatus::Attested);
+}
+
+#[test]
+fn test_rotate_attestor_drops_old_confirmation_and_preserves_others() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let attestor1 = Address::generate(&env);
+    let attestor2 = Address::generate(&env);
+    let attestor3 = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+
+    let (token, asset_client, _) = create_token(&env, &admin);
+    let amount: i128 = 1_000_000_000;
+    asset_client.mint(&buyer, &(amount * 10));
+
+    let contract_id = env.register(EscrowContract, ());
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let deadline = env.ledger().timestamp() + 86400;
+    let attestors = vec![&env, attestor1.clone(), attestor2.clone(), attestor3.clone()];
+    // 3-of-3 threshold
+    client.create(
+        &buyer,
+        &seller,
+        &attestors,
+        &3,
+        &arbiter,
+        &token,
+        &amount,
+        &deadline,
+    );
+
+    // Attestor1 and Attestor2 confirm
+    client.attest(&attestor1);
+    client.attest(&attestor2);
+    let order_before = client.get_order();
+    assert_eq!(order_before.confirmations.len(), 2);
+    assert_eq!(order_before.status, OrderStatus::Created);
+
+    // Rotate Attestor1 (who had confirmed) with new Attestor4
+    let new_attestor = Address::generate(&env);
+    client.rotate_attestor(&attestor1, &new_attestor);
+
+    let order_after = client.get_order();
+    // Attestor1's confirmation was dropped, Attestor2's confirmation survived
+    assert_eq!(order_after.confirmations.len(), 1);
+    assert_eq!(order_after.confirmations.get(0).unwrap(), attestor2);
+
+    // New attestor and Attestor3 confirm to reach 3-of-3 threshold
+    client.attest(&new_attestor);
+    client.attest(&attestor3);
+    assert_eq!(client.get_order().status, OrderStatus::Attested);
+}
+
+#[test]
+fn test_rotate_attestor_rejects_unauthorized_and_invalid_inputs() {
+    let t = setup(86400);
+
+    let new_attestor = Address::generate(&t.env);
+    let unknown_attestor = Address::generate(&t.env);
+
+    // Rotating an attestor not in the set fails
+    let res = t.client.try_rotate_attestor(&unknown_attestor, &new_attestor);
+    assert_eq!(res, Err(Ok(Error::AttestorNotFound)));
+
+    // Rotating to an address already in the attestor set fails
+    let res = t.client.try_rotate_attestor(&t.attestor1, &t.attestor2);
+    assert_eq!(res, Err(Ok(Error::AttestorAlreadyExists)));
+
+    // Rotate after status is Attested fails
+    t.client.attest(&t.attestor1);
+    t.client.attest(&t.attestor2);
+    assert_eq!(t.client.get_order().status, OrderStatus::Attested);
+
+    let res = t.client.try_rotate_attestor(&t.attestor3, &new_attestor);
+    assert_eq!(res, Err(Ok(Error::WrongStatus)));
+}
+
+#[test]
+fn test_rotate_attestor_after_deadline_fails() {
+    let t = setup(100);
+
+    t.env.ledger().set_timestamp(t.env.ledger().timestamp() + 101);
+    let new_attestor = Address::generate(&t.env);
+    let res = t.client.try_rotate_attestor(&t.attestor1, &new_attestor);
+    assert_eq!(res, Err(Ok(Error::DeadlinePassed)));
+}
+
+#[test]
+fn test_rotate_attestor_requires_arbiter_auth() {
+    use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+    use soroban_sdk::IntoVal;
+
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let attestor1 = Address::generate(&env);
+    let attestor2 = Address::generate(&env);
+    let attestor3 = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let new_attestor = Address::generate(&env);
+
+    let (token, asset_client, _) = create_token(&env, &admin);
+    let amount: i128 = 1_000_000_000;
+    asset_client.mint(&buyer, &amount);
+
+    let contract_id = env.register(EscrowContract, ());
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let attestors = vec![&env, attestor1.clone(), attestor2.clone(), attestor3.clone()];
+    client.create(
+        &buyer,
+        &seller,
+        &attestors,
+        &2,
+        &arbiter,
+        &token,
+        &amount,
+        &(env.ledger().timestamp() + 86400),
+    );
+
+    // Try rotating with only buyer auth -> fails
+    env.mock_auths(&[MockAuth {
+        address: &buyer,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "rotate_attestor",
+            args: (&attestor1, &new_attestor).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(client.try_rotate_attestor(&attestor1, &new_attestor).is_err());
+
+    // Try rotating with arbiter auth -> succeeds
+    env.mock_auths(&[MockAuth {
+        address: &arbiter,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "rotate_attestor",
+            args: (&attestor1, &new_attestor).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(client.try_rotate_attestor(&attestor1, &new_attestor).is_ok());
+}
+
+

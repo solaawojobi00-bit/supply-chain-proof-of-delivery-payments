@@ -1,6 +1,16 @@
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, token, Address, Env, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env, Vec,
+};
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RotateAttestorEvent {
+    pub order_id: u64,
+    pub old_attestor: Address,
+    pub new_attestor: Address,
+}
 
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -50,6 +60,8 @@ pub enum Error {
     ThresholdExceedsAttestors = 9,
     AttestorNotAuthorized = 10,
     AlreadyConfirmed = 11,
+    AttestorNotFound = 12,
+    AttestorAlreadyExists = 13,
 }
 
 const LEDGERS_PER_DAY: u32 = 17280; // ~5s ledger close time
@@ -151,6 +163,72 @@ impl EscrowRegistryContract {
         env.storage()
             .persistent()
             .extend_ttl(&key, STORAGE_TTL_THRESHOLD, STORAGE_TTL_LEDGERS);
+
+        Ok(())
+    }
+
+    /// Rotates an attestor's key for a given `order_id` before the order is attested/settled.
+    /// Callable by the arbiter only.
+    /// Replaces `old_attestor` in `order.attestors` with `new_attestor`.
+    /// If `old_attestor` had previously confirmed, its confirmation is dropped so
+    /// the new key must independently confirm; confirmations from other attestors are preserved.
+    pub fn rotate_attestor(
+        env: Env,
+        order_id: u64,
+        old_attestor: Address,
+        new_attestor: Address,
+    ) -> Result<(), Error> {
+        let key = DataKey::Order(order_id);
+        let mut order = Self::load(&env, order_id)?;
+
+        if order.status != OrderStatus::Created {
+            return Err(Error::WrongStatus);
+        }
+        if env.ledger().timestamp() >= order.deadline {
+            return Err(Error::DeadlinePassed);
+        }
+
+        order.arbiter.require_auth();
+
+        if order.attestors.contains(&new_attestor) {
+            return Err(Error::AttestorAlreadyExists);
+        }
+
+        let mut old_idx_opt = None;
+        for i in 0..order.attestors.len() {
+            if order.attestors.get(i).unwrap() == old_attestor {
+                old_idx_opt = Some(i);
+                break;
+            }
+        }
+
+        let old_idx = match old_idx_opt {
+            Some(idx) => idx,
+            None => return Err(Error::AttestorNotFound),
+        };
+
+        order.attestors.set(old_idx, new_attestor.clone());
+
+        // If old attestor had already confirmed, drop its confirmation
+        let mut new_confirmations = Vec::new(&env);
+        for conf in order.confirmations.iter() {
+            if conf != old_attestor {
+                new_confirmations.push_back(conf);
+            }
+        }
+        order.confirmations = new_confirmations;
+
+        env.storage().persistent().set(&key, &order);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, STORAGE_TTL_THRESHOLD, STORAGE_TTL_LEDGERS);
+
+        RotateAttestorEvent {
+            order_id,
+            old_attestor,
+            new_attestor,
+        }
+        .publish(&env);
 
         Ok(())
     }
