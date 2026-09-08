@@ -8,6 +8,14 @@ function requireEnv(name: string): string {
   return value;
 }
 
+export function parseCorsOrigins(origins?: string): string[] {
+  if (!origins || origins.trim() === "") return [];
+  return origins
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+}
+
 export const config = {
   rpcUrl: requireEnv("STELLAR_RPC_URL"),
   networkPassphrase: requireEnv("STELLAR_NETWORK_PASSPHRASE"),
@@ -24,6 +32,7 @@ export const config = {
   attestorApiKey: process.env.ATTESTOR_API_KEY ?? "demo-attestor-token",
   arbiterApiKey: process.env.ARBITER_API_KEY ?? "demo-arbiter-token",
   adminApiKey: process.env.ADMIN_API_KEY ?? "demo-admin-token",
+  corsAllowedOrigins: parseCorsOrigins(process.env.CORS_ALLOWED_ORIGINS),
   port: Number(process.env.PORT ?? 3000),
   dbPath: process.env.DB_PATH ?? "./data/orders.sqlite",
 };
