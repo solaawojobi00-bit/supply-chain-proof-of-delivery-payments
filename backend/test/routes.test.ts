@@ -437,6 +437,7 @@ describe("API Routes (routes.ts)", () => {
     const disputedOrder = (await disputeRes.json()) as any;
     expect(disputedOrder.status).toBe("Disputed");
     expect(disputedOrder.lifecycle).toBe("disputed");
+    expect(disputedOrder.evidenceHash).toBeNull();
     expect(disputedOrder.txHashes.dispute).toBe("mock-dispute-hash");
 
     // Resolve dispute releasing to seller
@@ -450,6 +451,46 @@ describe("API Routes (routes.ts)", () => {
     expect(resolvedOrder.status).toBe("Claimed");
     expect(resolvedOrder.lifecycle).toBe("claimed");
     expect(resolvedOrder.txHashes.resolve).toBe("mock-resolve-hash");
+  });
+
+  it("POST /orders/:id/dispute supports optional 32-byte evidenceHash", async () => {
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
+    const createRes = await fetch(`${baseUrl}/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sellerAddress: sellerKeypair.publicKey(),
+        attestorAddress: attestorKeypair.publicKey(),
+        amountStroops: "15000000",
+        deadlineSeconds: deadline.toString(),
+      }),
+    });
+    const order = (await createRes.json()) as any;
+
+    await fetch(`${baseUrl}/orders/${order.id}/attest`, {
+      method: "POST",
+      headers: attestorAuth,
+    });
+
+    // Invalid evidence hash rejected with 400
+    const invalidDisputeRes = await fetch(`${baseUrl}/orders/${order.id}/dispute`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...buyerAuth },
+      body: JSON.stringify({ evidenceHash: "not-a-32-byte-hex-hash" }),
+    });
+    expect(invalidDisputeRes.status).toBe(400);
+
+    // Valid 64-character hex evidence hash accepted
+    const validHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const validDisputeRes = await fetch(`${baseUrl}/orders/${order.id}/dispute`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...buyerAuth },
+      body: JSON.stringify({ evidenceHash: validHash }),
+    });
+    expect(validDisputeRes.status).toBe(200);
+    const disputed = (await validDisputeRes.json()) as any;
+    expect(disputed.status).toBe("Disputed");
+    expect(disputed.evidenceHash).toBe(validHash);
   });
 
   describe("Per-Role API Authentication (Issue #12)", () => {

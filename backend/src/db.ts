@@ -21,6 +21,7 @@ export interface OrderRow {
   amount: string;
   deadline: number;
   status: OrderStatus;
+  evidence_hash?: string | null;
   create_tx_hash: string | null;
   attest_tx_hash: string | null;
   claim_tx_hash: string | null;
@@ -58,6 +59,7 @@ db.exec(`
     amount TEXT NOT NULL,
     deadline INTEGER NOT NULL,
     status TEXT NOT NULL,
+    evidence_hash TEXT,
     create_tx_hash TEXT,
     attest_tx_hash TEXT,
     claim_tx_hash TEXT,
@@ -166,12 +168,18 @@ try {
   // column already exists
 }
 
+try {
+  db.exec(`ALTER TABLE orders ADD COLUMN evidence_hash TEXT`);
+} catch {
+  // column already exists
+}
+
 export function insertOrder(row: OrderRow): void {
   db.prepare(
     `INSERT INTO orders (
       id, contract_id, numeric_id, buyer_address, seller_address, attestor_address,
       attestors, threshold, confirmations, arbiter_address,
-      token_contract_id, amount, deadline, status,
+      token_contract_id, amount, deadline, status, evidence_hash,
       create_tx_hash, attest_tx_hash, claim_tx_hash, reclaim_tx_hash, cancel_tx_hash,
       dispute_tx_hash, resolve_tx_hash,
       buyer_token, seller_token, attestor_token, arbiter_token,
@@ -180,7 +188,7 @@ export function insertOrder(row: OrderRow): void {
     ) VALUES (
       @id, @contract_id, @numeric_id, @buyer_address, @seller_address, @attestor_address,
       @attestors, @threshold, @confirmations, @arbiter_address,
-      @token_contract_id, @amount, @deadline, @status,
+      @token_contract_id, @amount, @deadline, @status, @evidence_hash,
       @create_tx_hash, @attest_tx_hash, @claim_tx_hash, @reclaim_tx_hash, @cancel_tx_hash,
       @dispute_tx_hash, @resolve_tx_hash,
       @buyer_token, @seller_token, @attestor_token, @arbiter_token,
@@ -194,6 +202,7 @@ export function insertOrder(row: OrderRow): void {
     threshold: row.threshold ?? 1,
     confirmations: row.confirmations ?? "[]",
     arbiter_address: row.arbiter_address ?? null,
+    evidence_hash: row.evidence_hash ?? null,
     cancel_tx_hash: row.cancel_tx_hash ?? null,
     dispute_tx_hash: row.dispute_tx_hash ?? null,
     resolve_tx_hash: row.resolve_tx_hash ?? null,
@@ -237,6 +246,17 @@ export function updateOrderStatus(
     txHash,
     id,
   );
+}
+
+export function updateOrderDispute(
+  id: string,
+  status: OrderStatus,
+  disputeTxHash: string,
+  evidenceHash?: string | null,
+): void {
+  db.prepare(
+    `UPDATE orders SET status = ?, dispute_tx_hash = ?, evidence_hash = ? WHERE id = ?`,
+  ).run(status, disputeTxHash, evidenceHash ?? null, id);
 }
 
 export function updateOrderAttestation(

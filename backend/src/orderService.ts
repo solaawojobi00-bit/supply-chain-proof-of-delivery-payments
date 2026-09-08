@@ -39,6 +39,7 @@ import {
   insertOrder,
   listOrders,
   updateOrderAttestation,
+  updateOrderDispute,
   updateOrderStatus,
   type OrderRow,
 } from "./db.js";
@@ -348,7 +349,7 @@ export async function cancelOrder(id: string): Promise<OrderRow> {
   return updatedCancel;
 }
 
-export async function disputeOrder(id: string): Promise<OrderRow> {
+export async function disputeOrder(id: string, evidenceHash?: string | null): Promise<OrderRow> {
   const order = requireOrder(id);
   if (order.status !== "Attested") {
     throw new HttpError(
@@ -365,9 +366,14 @@ export async function disputeOrder(id: string): Promise<OrderRow> {
   }
   const txHash =
     order.numeric_id != null && order.contract_id === config.escrowRegistryContractId
-      ? await callRegistryDispute(order.contract_id, buyerSigner, BigInt(order.numeric_id))
-      : await callDispute(order.contract_id, buyerSigner);
-  updateOrderStatus(id, "Disputed", "dispute_tx_hash", txHash ?? "");
+      ? await callRegistryDispute(
+          order.contract_id,
+          buyerSigner,
+          BigInt(order.numeric_id),
+          evidenceHash,
+        )
+      : await callDispute(order.contract_id, buyerSigner, evidenceHash);
+  updateOrderDispute(id, "Disputed", txHash ?? "", evidenceHash);
   const updatedDispute = requireOrder(id);
   await dispatchWebhook(updatedDispute, "order.disputed", txHash);
   return updatedDispute;
@@ -569,6 +575,7 @@ export async function buildUnsignedCancel(
 export async function buildUnsignedDispute(
   id: string,
   buyerAddress?: string,
+  evidenceHash?: string | null,
 ): Promise<{ unsignedTxXdr: string; orderId: string; contractId: string; action: string }> {
   const order = requireOrder(id);
   if (order.status !== "Attested") {
@@ -581,8 +588,13 @@ export async function buildUnsignedDispute(
 
   const unsignedTxXdr =
     order.numeric_id != null && order.contract_id === config.escrowRegistryContractId
-      ? await buildRegistryUnsignedDisputeTx(order.contract_id, buyer, BigInt(order.numeric_id))
-      : await buildUnsignedDisputeTx(order.contract_id, buyer);
+      ? await buildRegistryUnsignedDisputeTx(
+          order.contract_id,
+          buyer,
+          BigInt(order.numeric_id),
+          evidenceHash,
+        )
+      : await buildUnsignedDisputeTx(order.contract_id, buyer, evidenceHash);
 
   return { unsignedTxXdr, orderId: id, contractId: order.contract_id, action: "dispute" };
 }

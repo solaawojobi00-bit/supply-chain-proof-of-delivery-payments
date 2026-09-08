@@ -168,6 +168,15 @@ export const attestOrderSchema = z.object({
     .optional(),
 });
 
+export const disputeOrderSchema = z.object({
+  evidenceHash: z
+    .string()
+    .regex(/^[0-9a-fA-F]{64}$/, {
+      message: "evidenceHash must be a 64-character hex string (32 bytes)",
+    })
+    .optional(),
+});
+
 export const resolveDisputeSchema = z.object({
   releaseToSeller: z.boolean({
     message: "releaseToSeller is required and must be a boolean",
@@ -198,6 +207,12 @@ export const buildTxSchema = z.object({
     .string()
     .refine(isValidStellarAddress, {
       message: "callerAddress must be a valid Stellar public key (G...)",
+    })
+    .optional(),
+  evidenceHash: z
+    .string()
+    .regex(/^[0-9a-fA-F]{64}$/, {
+      message: "evidenceHash must be a 64-character hex string (32 bytes)",
     })
     .optional(),
   releaseToSeller: z.boolean().optional(),
@@ -235,6 +250,7 @@ export const iotEventSchema = z.object({
 
 export type CreateOrderBody = z.infer<typeof createOrderSchema>;
 export type AttestOrderBody = z.infer<typeof attestOrderSchema>;
+export type DisputeOrderBody = z.infer<typeof disputeOrderSchema>;
 export type ResolveDisputeBody = z.infer<typeof resolveDisputeSchema>;
 export type SubmitSignedTxBody = z.infer<typeof submitSignedTxSchema>;
 export type BuildTxBody = z.infer<typeof buildTxSchema>;

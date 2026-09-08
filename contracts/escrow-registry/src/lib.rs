@@ -1,7 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, BytesN,
+    Env, Vec,
 };
 
 #[contractevent]
@@ -18,6 +19,13 @@ pub struct ExtendDeadlineEvent {
     pub order_id: u64,
     pub old_deadline: u64,
     pub new_deadline: u64,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeEvent {
+    pub order_id: u64,
+    pub evidence_hash: Option<BytesN<32>>,
 }
 
 #[contracttype]
@@ -45,6 +53,7 @@ pub struct Order {
     pub amount: i128,
     pub deadline: u64,
     pub status: OrderStatus,
+    pub evidence_hash: Option<BytesN<32>>,
 }
 
 #[contracttype]
@@ -131,6 +140,7 @@ impl EscrowRegistryContract {
             amount,
             deadline,
             status: OrderStatus::Created,
+            evidence_hash: None,
         };
 
         env.storage().persistent().set(&key, &order);
@@ -284,7 +294,11 @@ impl EscrowRegistryContract {
 
     /// Buyer raises a dispute against an attested delivery for a given `order_id` before the seller claims.
     /// Only valid while `status == Attested`. Pauses the claim.
-    pub fn dispute(env: Env, order_id: u64) -> Result<(), Error> {
+    pub fn dispute(
+        env: Env,
+        order_id: u64,
+        evidence_hash: Option<BytesN<32>>,
+    ) -> Result<(), Error> {
         let key = DataKey::Order(order_id);
         let mut order = Self::load(&env, order_id)?;
 
@@ -295,10 +309,17 @@ impl EscrowRegistryContract {
         order.buyer.require_auth();
 
         order.status = OrderStatus::Disputed;
+        order.evidence_hash = evidence_hash.clone();
         env.storage().persistent().set(&key, &order);
         env.storage()
             .persistent()
             .extend_ttl(&key, STORAGE_TTL_THRESHOLD, STORAGE_TTL_LEDGERS);
+
+        DisputeEvent {
+            order_id,
+            evidence_hash,
+        }
+        .publish(&env);
 
         Ok(())
     }

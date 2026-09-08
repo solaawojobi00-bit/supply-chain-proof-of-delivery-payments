@@ -26,6 +26,7 @@ import {
   attestOrderSchema,
   buildTxSchema,
   createOrderSchema,
+  disputeOrderSchema,
   formatZodError,
   iotEventSchema,
   registerAttestorSchema,
@@ -129,6 +130,7 @@ function serialize(order: OrderRow) {
     deadline: order.deadline,
     status: order.status,
     lifecycle: lifecycleLabel(order),
+    evidenceHash: order.evidence_hash ?? null,
     tokens: {
       buyer: order.buyer_token ?? null,
       seller: order.seller_token ?? null,
@@ -443,16 +445,25 @@ router.post(
     const order = getOrderById(orderId);
     verifyRole(req, order, "buyer");
 
+    let evidenceHash: string | undefined;
+    if (req.body && typeof req.body === "object" && Object.keys(req.body).length > 0) {
+      const parseResult = disputeOrderSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        throw new HttpError(400, formatZodError(parseResult.error));
+      }
+      evidenceHash = parseResult.data.evidenceHash;
+    }
+
     if (isUnsignedRequested(req)) {
       const buyerAddress =
         typeof req.body === "object" && req.body && typeof req.body.buyerAddress === "string"
           ? req.body.buyerAddress
           : undefined;
-      const result = await buildUnsignedDispute(orderId, buyerAddress);
+      const result = await buildUnsignedDispute(orderId, buyerAddress, evidenceHash);
       res.json(result);
       return;
     }
-    res.json(serialize(await disputeOrder(orderId)));
+    res.json(serialize(await disputeOrder(orderId, evidenceHash)));
   }),
 );
 
@@ -496,7 +507,8 @@ router.post(
     if (!parseResult.success) {
       throw new HttpError(400, formatZodError(parseResult.error));
     }
-    const { action, attestorAddress, callerAddress, releaseToSeller } = parseResult.data;
+    const { action, attestorAddress, callerAddress, evidenceHash, releaseToSeller } =
+      parseResult.data;
 
     switch (action) {
       case "attest":
@@ -517,7 +529,7 @@ router.post(
         break;
       case "dispute":
         verifyRole(req, order, "buyer");
-        res.json(await buildUnsignedDispute(orderId, callerAddress));
+        res.json(await buildUnsignedDispute(orderId, callerAddress, evidenceHash));
         break;
       case "resolve":
         verifyRole(req, order, "arbiter");
