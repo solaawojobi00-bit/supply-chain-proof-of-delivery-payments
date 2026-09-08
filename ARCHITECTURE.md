@@ -110,14 +110,28 @@ Methods:
 | `resolve_dispute(order_id, release_to_seller)`                                                  | arbiter             | `status == Disputed`                               | `require_auth(arbiter)`; transfers funds to seller (`Claimed`) or buyer (`Reclaimed`) based on `release_to_seller`; updates status appropriately |
 | `get_order(order_id)`                                                                           | anyone              | `order_id` exists                                  | Returns `Order` state                                                                                                                            |
 
-### Migration Note & Architectural Trade-offs
+### Migration Note & Architectural Decision
+
+#### 1. Canonical Topology Decision
+The **Shared Escrow Registry (`contracts/escrow-registry`)** is designated as the **canonical contract topology** for production deployments. It eliminates per-order contract deployment overhead, significantly lowers transaction fees and latency on order creation, and aligns with high-throughput multi-party escrow operations.
+
+#### 2. Support Status & Feature Parity Rule
+- **`contracts/escrow-registry`**: **Canonical / Primary**. Deployed once as a shared registry contract managing orders by unique `order_id`.
+- **`contracts/escrow`**: **Dual-Supported Reference Implementation**. Deployed per-order for standalone isolation.
+- **Rule for Feature Parity**: Both contract topologies are maintained under **active dual-support with strict feature parity**. Whenever a contract capability or method is added (e.g., mid-order key rotation, mutual deadline extensions, evidence hashes in disputes), contributors must implement the changes across **both** contract crates:
+  - In `contracts/escrow`: method operates on the single-order contract instance (e.g. `rotate_attestor(env, old, new)`).
+  - In `contracts/escrow-registry`: method operates with an `order_id` parameter (e.g. `rotate_attestor(env, order_id, old, new)`).
+  - Full test coverage must be added to both `contracts/escrow/src/test.rs` and `contracts/escrow-registry/src/test.rs`.
+
+#### 3. Backend Implementation Target (`contractOps.ts`)
+The Node/Express backend's `contractOps.ts` currently targets the per-order `contracts/escrow` WASM implementation (`ESCROW_WASM_HASH`) because it provided hermetic lifecycle testing during initial Phase 1 development. The roadmap transitions the backend client to invoke the shared registry contract (`ESCROW_REGISTRY_CONTRACT_ID`) in Phase 2+.
 
 - **Per-Order Deployment (`contracts/escrow`)**:
   - _Pros_: Extreme isolation; contract storage automatically bounds to single order lifecycle.
   - _Cons_: High deployment fees and latency on every order creation (`ContractClient.deploy`).
 - **Shared Registry (`contracts/escrow-registry`)**:
   - _Pros_: Zero per-order deployment cost; orders are created via standard contract invocations (`create_order`); faster throughput.
-  - _Cons & Tradeoffs_: Persistent storage expands linearly with order volume. Each entry utilizes Soroban persistent storage with explicit TTL extensions (`extend_ttl`). For production scale, an archival/eviction policy or storage rent fee reclaim mechanism after finalization (`Claimed`/`Reclaimed`) is required to manage long-term state footprint.
+  - _Cons & Tradeoffs_: Persistent storage expands linearly with order volume. Each entry utilizes Soroban persistent storage with explicit TTL extensions (`extend_ttl`). For production scale, an archival/eviction policy or storage rent fee reclaim mechanism after finalization (`Claimed`/`Reclaimed`) is required to manage long-term state footprint (see issue #65).
 
 Funds custody: both contracts call the token contract's `transfer` to pull
 funds from the buyer into the contract instance in `create`/`create_order`, and to push funds out in
