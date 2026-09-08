@@ -24,6 +24,7 @@ dispute arbitration for contested attestations. See the
 ```
 contracts/escrow/        Soroban escrow contract (Rust)
 backend/                 REST API + order tracking (Node/TypeScript)
+frontend/                Web frontend with Freighter wallet connect (Vite/Vanilla JS/CSS)
 scripts/                 Hygiene & audit tools (e.g. unified dependency audit gate)
 .github/workflows/       CI, CodeQL, Gitleaks, and Release workflows
 .github/dependabot.yml   Automated dependency update configuration
@@ -87,6 +88,38 @@ npm run demo:reclaim   # create with a short deadline -> deadline passes -> recl
 
 Each prints the order at every lifecycle step, including the real testnet
 transaction hash for every state-changing call.
+
+## 5. Web Frontend (Buyer, Attestor, Seller Portals)
+
+The repository includes a modern single-page web frontend in `frontend/` featuring client-side wallet signing with [Freighter](https://www.freighter.app/) and simulated in-memory test keypairs.
+
+### Running the Frontend Locally
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173` in your browser. Ensure the backend is running on `http://localhost:3000`.
+
+### Features & Role Portals
+- **🛒 Buyer Portal**:
+  - Connect wallet (Freighter or test keypair).
+  - Create escrow orders with custom amounts, deadlines, tokens, and optional webhooks.
+  - Transactions are constructed unsigned on the backend, signed client-side in your wallet, and submitted to Soroban.
+  - Track status of all orders created by the connected wallet.
+- **🚚 Attestor Portal**:
+  - Automatically filters orders where your connected wallet is the designated delivery attestor.
+  - One-click delivery confirmation (`Confirm Delivery`) signed directly via your wallet.
+- **💰 Seller Portal**:
+  - Automatically filters orders where your connected wallet is the seller.
+  - Claim escrow funds (`Claim Funds`) once delivery has been attested.
+- **🔍 Explorer & Inspector**:
+  - Searchable explorer for all active/historical contracts, live lifecycle state, and on-chain transaction hashes.
+
+### Client-Side Signing Guarantee
+Secret keys are **never** transmitted to the backend. All on-chain actions use client-side signed XDR transactions submitted directly to the network via `/tx/submit`.
 
 ### Multi-Asset Support (Non-Native Tokens)
 

@@ -47,8 +47,46 @@ paths:
 
     get:
       summary: List all orders
-      description: Returns all orders tracked in the local database.
+      description: Returns all orders tracked in the local database, with optional filtering by role, participant address, or status.
       operationId: getAllOrders
+      parameters:
+        - name: role
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [buyer, seller, attestor, arbiter]
+          description: Filter orders where the provided address has this specific role.
+        - name: address
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Stellar public key address of a participant to filter orders for.
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by order status (e.g. Created, Attested, Claimed, Reclaimed, Cancelled, Disputed).
+        - name: buyer
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by buyer Stellar public key.
+        - name: seller
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by seller Stellar public key.
+        - name: attestor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by attestor Stellar public key.
       responses:
         "200":
           description: List of all orders

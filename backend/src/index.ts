@@ -5,6 +5,19 @@ import { logStructured, requestLogger } from "./logger.js";
 import { router } from "./routes.js";
 
 export const app = express();
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, x-api-key, x-auth-token, x-role-key, x-role-token, idempotency-key, x-idempotency-key, x-unsigned",
+  );
+  if (req.method === "OPTIONS") {
+    res.sendStatus(204);
+    return;
+  }
+  next();
+});
 app.use(express.json());
 app.use(requestLogger);
 app.use(router);
