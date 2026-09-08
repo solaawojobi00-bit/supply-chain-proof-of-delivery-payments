@@ -79,12 +79,10 @@ buildable v1.
 
 - **Multi-attestor / M-of-N confirmation**: requiring agreement from multiple
   independent attestors (e.g. 2-of-3 couriers/warehouses) before releasing
-  payment, removing single-party trust. This is materially harder (threshold
-  signature or multi-sig coordination, attestor incentive design, handling
-  disagreement) and is explicitly deferred.
+  payment, removing single-party trust. (Implemented in smart contract and backend).
 - **GPS / IoT-based automated attestation**: deriving delivery confirmation
-  automatically from device telemetry (geofencing, RFID/NFC scans, IoT sensor
-  data) rather than a human/organization submitting a signed transaction.
+  automatically from device telemetry (geofencing arrival, RFID/NFC scans, IoT sensor
+  data) authenticated via HMAC-SHA256 device signatures. (Implemented in backend integration layer).
 - **Dispute arbitration**: any mechanism for a buyer or seller to contest an
   attestation after the fact (e.g. "the attestor was wrong/colluding"),
   including arbitration panels, staking/slashing for dishonest attestors, or

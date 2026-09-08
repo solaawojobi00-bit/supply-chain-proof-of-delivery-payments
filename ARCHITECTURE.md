@@ -308,6 +308,45 @@ To establish trust without centralized identity providers, the system features a
    - Buyers and marketplaces can query available attestors filtered by coverage area and minimum reputation score, sorting high-reputation verifiers to the top.
    - `POST /orders` accepts `attestorId` (referencing a directory entry) in place of raw Stellar addresses.
 
+## GPS/IoT Automated Attestation Integration (`backend/src/integrations/iotAttestation.ts`)
+
+In modern logistics workflows, delivery confirmations can be triggered automatically by physical telemetry rather than manual portal interactions:
+
+```
+  ┌─────────────────────────────────────────────────────────────┐
+  │                 IoT / Telemetry Sources                     │
+  │  - GPS Trackers (Geofence entry at destination coordinates) │
+  │  - Smart RFID / NFC Gate Scanners (Pallet unload scans)     │
+  │  - Cold-chain / IoT Environmental Sensors                   │
+  └──────────────────────────────┬──────────────────────────────┘
+                                 │ POST /integrations/iot/events
+                                 │ Headers: X-IoT-Signature (HMAC-SHA256) | X-IoT-Secret
+                                 ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │         Device Telemetry & Ingestion Trust Layer            │
+  │  1. Authenticates telemetry origin (HMAC / shared token)    │
+  │  2. Validates geofence coordinates / radius threshold       │
+  │  3. Verifies scan codes and telemetry constraints           │
+  └──────────────────────────────┬──────────────────────────────┘
+                                 │ Validated telemetry trigger
+                                 ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │             On-Chain Attestor Signing Authority             │
+  │  - Invokes existing `attestOrder(orderId)` pipeline         │
+  │  - Signs transaction with designated on-chain attestor key  │
+  │  - Submits signed `attest()` transaction to Stellar network │
+  │  - Dispatches `order.attested` webhook notification         │
+  └─────────────────────────────────────────────────────────────┘
+```
+
+### Trust Boundary Architecture: What's Trusted vs. What's Unchanged
+1. **New Trust Boundary (Device / Telemetry Ingestion)**:
+   - **What is trusted**: The cryptographic authenticity of the incoming telemetry stream (verified via constant-time HMAC-SHA256 signature `X-IoT-Signature` or shared token `X-IoT-Secret`) and the accuracy of device GPS/RFID readings.
+   - **Enforcement**: Telemetry requests missing or failing signature verification are immediately rejected with `401 Unauthorized`. Geofence coordinates outside the allowed delivery radius are rejected with `422 Unprocessable Entity`.
+2. **Unchanged Trust Boundary (On-Chain Smart Contract Authority)**:
+   - **What is unchanged**: Smart contract authorization rules remain strictly enforced by Soroban. Only the designated `attestor` address recorded on-chain during order creation has authority to submit the signed `attest()` transaction.
+   - The IoT integration serves purely as an **automated trigger** for the designated attestor's signing key, rather than altering on-chain permissions.
+
 ## Development, CI/CD & Project Hygiene
 
 To ensure high reliability, security, and supply-chain integrity, the repository employs automated quality gates and hygiene pipelines:

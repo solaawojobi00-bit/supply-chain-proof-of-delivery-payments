@@ -27,11 +27,13 @@ import {
   buildTxSchema,
   createOrderSchema,
   formatZodError,
+  iotEventSchema,
   registerAttestorSchema,
   resolveDisputeSchema,
   submitSignedTxSchema,
 } from "./schemas.js";
 import { getAttestorById, listAttestors, registerAttestor } from "./attestorDirectory.js";
+import { processIoTTelemetryEvent } from "./integrations/iotAttestation.js";
 import { getOrderByIdempotencyKey, type OrderRow } from "./db.js";
 
 export const router = Router();
@@ -39,6 +41,34 @@ export const router = Router();
 router.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok" });
 });
+
+router.post(
+  "/integrations/iot/events",
+  asyncHandler(async (req, res) => {
+    const parseResult = iotEventSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      throw new HttpError(400, formatZodError(parseResult.error));
+    }
+
+    const signature =
+      req.header("x-iot-signature") ||
+      (req.header("authorization")?.startsWith("Signature ")
+        ? req.header("authorization")?.slice(10)
+        : undefined);
+    const secret =
+      req.header("x-iot-secret") ||
+      (req.header("authorization")?.startsWith("Bearer ")
+        ? req.header("authorization")?.slice(7)
+        : undefined);
+
+    const result = await processIoTTelemetryEvent(parseResult.data, {
+      signature,
+      secret,
+    });
+
+    res.status(200).json(result);
+  }),
+);
 
 router.post(
   "/attestors",
