@@ -249,6 +249,46 @@ covering the period between `Created` and `Attested`; `delivered/confirmed`
 maps to contract `Attested`; `claimed`/`deadline-passed`/`reclaimed` map
 directly to `Claimed`/`Reclaimed`.
 
+## Web Frontend & Client-Side Wallet Architecture (`frontend/`)
+
+The frontend application (`frontend/`) provides an interactive interface for buyers, sellers, and attestors with zero-trust key management:
+
+```
+  ┌──────────────────────────────────────────────────────────────┐
+  │                 Web Frontend (Browser Client)                │
+  │  ┌──────────────┐   ┌──────────────────┐   ┌──────────────┐  │
+  │  │ Buyer Portal │   │  Attestor Portal │   │ Seller Portal│  │
+  │  └──────┬───────┘   └────────┬─────────┘   └──────┬───────┘  │
+  │         │                    │                    │          │
+  │         ▼                    ▼                    ▼          │
+  │  ┌────────────────────────────────────────────────────────┐  │
+  │  │           Wallet Connector (Freighter / Keypair)       │  │
+  │  │  - Signs unsigned XDR locally in browser memory        │  │
+  │  │  - Zero private keys ever sent over HTTP / network     │  │
+  │  └───────────────────────────┬────────────────────────────┘  │
+  └──────────────────────────────┼───────────────────────────────┘
+                                 │ 1. Request Unsigned XDR (POST ...?unsigned=true)
+                                 │ 2. Submit Signed XDR (POST /tx/submit)
+                                 ▼
+  ┌──────────────────────────────────────────────────────────────┐
+  │                REST API Backend (Node / TS)                  │
+  │  - Builds unsigned Soroban transaction envelopes             │
+  │  - Submits client-signed transactions to Stellar Testnet RPC  │
+  │  - Tracks order database & emits webhook state events        │
+  └──────────────────────────────────────────────────────────────┘
+```
+
+1. **Client-Side Signing Guarantee**:
+   - `wallet.js` manages connections with Freighter browser extension and simulated in-memory test keypairs.
+   - When an action is requested (`create`, `attest`, `claim`, `cancel`, `dispute`), the frontend requests an unsigned transaction envelope from the backend (`?unsigned=true`).
+   - The user inspects and signs the transaction client-side via Freighter.
+   - The signed transaction envelope is submitted to `/tx/submit` or `/orders/:id/submit`.
+2. **Role-Based Views**:
+   - **Buyer View**: Form to parameterize and fund escrow orders; table tracking buyer-owned orders.
+   - **Attestor View**: Filtered dashboard listing only deliveries where the connected wallet is the designated attestor, with one-click delivery attestation.
+   - **Seller View**: Filtered dashboard listing claimable payments with one-click escrow claiming once delivery is confirmed.
+   - **Explorer & Inspector**: Global order feed with deep on-chain state inspection and transaction hashes.
+
 ## Development, CI/CD & Project Hygiene
 
 To ensure high reliability, security, and supply-chain integrity, the repository employs automated quality gates and hygiene pipelines:

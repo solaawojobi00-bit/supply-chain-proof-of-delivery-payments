@@ -704,4 +704,67 @@ describe("API Routes (routes.ts)", () => {
       expect(err.error).toContain("valid URL");
     });
   });
+
+  describe("GET /orders Filtering (Issue #16)", () => {
+    it("filters orders by role, participant address, and status", async () => {
+      const buyerPk = buyerKeypair.publicKey();
+      const sellerPk = sellerKeypair.publicKey();
+      const attestorPk = attestorKeypair.publicKey();
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+      // Create an order
+      const createRes = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          buyerAddress: buyerPk,
+          sellerAddress: sellerPk,
+          attestorAddress: attestorPk,
+          amountStroops: "15000000",
+          deadlineSeconds: deadline.toString(),
+        }),
+      });
+      expect(createRes.status).toBe(201);
+      const created = (await createRes.json()) as any;
+
+      // Filter by role=seller and address=sellerPk
+      const sellerOrdersRes = await fetch(
+        `${baseUrl}/orders?role=seller&address=${encodeURIComponent(sellerPk)}`,
+      );
+      expect(sellerOrdersRes.status).toBe(200);
+      const sellerOrders = (await sellerOrdersRes.json()) as any[];
+      expect(sellerOrders.some((o) => o.id === created.id)).toBe(true);
+
+      // Filter by role=attestor and address=attestorPk
+      const attestorOrdersRes = await fetch(
+        `${baseUrl}/orders?role=attestor&address=${encodeURIComponent(attestorPk)}`,
+      );
+      expect(attestorOrdersRes.status).toBe(200);
+      const attestorOrders = (await attestorOrdersRes.json()) as any[];
+      expect(attestorOrders.some((o) => o.id === created.id)).toBe(true);
+
+      // Filter by generic address
+      const addrOrdersRes = await fetch(
+        `${baseUrl}/orders?address=${encodeURIComponent(buyerPk)}`,
+      );
+      expect(addrOrdersRes.status).toBe(200);
+      const addrOrders = (await addrOrdersRes.json()) as any[];
+      expect(addrOrders.some((o) => o.id === created.id)).toBe(true);
+
+      // Filter by status=Created
+      const statusOrdersRes = await fetch(`${baseUrl}/orders?status=Created`);
+      expect(statusOrdersRes.status).toBe(200);
+      const statusOrders = (await statusOrdersRes.json()) as any[];
+      expect(statusOrders.every((o) => o.status === "Created")).toBe(true);
+
+      // Non-matching address returns empty or non-matching list
+      const nonMatchingRes = await fetch(
+        `${baseUrl}/orders?address=GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI`,
+      );
+      expect(nonMatchingRes.status).toBe(200);
+      const nonMatching = (await nonMatchingRes.json()) as any[];
+      expect(nonMatching.some((o) => o.id === created.id)).toBe(false);
+    });
+  });
 });
+
