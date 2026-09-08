@@ -36,6 +36,7 @@ import {
 import { getAttestorById, listAttestors, registerAttestor } from "./attestorDirectory.js";
 import { processIoTTelemetryEvent } from "./integrations/iotAttestation.js";
 import { getOrderByIdempotencyKey, type OrderRow } from "./db.js";
+import { mutatingRateLimiter } from "./rateLimit.js";
 
 export const router = Router();
 
@@ -45,6 +46,7 @@ router.get("/health", (_req: Request, res: Response) => {
 
 router.post(
   "/integrations/iot/events",
+  mutatingRateLimiter,
   asyncHandler(async (req, res) => {
     const parseResult = iotEventSchema.safeParse(req.body);
     if (!parseResult.success) {
@@ -73,6 +75,7 @@ router.post(
 
 router.post(
   "/attestors",
+  mutatingRateLimiter,
   asyncHandler(async (req, res) => {
     const parseResult = registerAttestorSchema.safeParse(req.body);
     if (!parseResult.success) {
@@ -172,6 +175,7 @@ function asyncHandler(fn: (req: Request, res: Response) => Promise<void>) {
 
 router.post(
   "/orders",
+  mutatingRateLimiter,
   asyncHandler(async (req, res) => {
     const rawIdempotencyKey = req.header("idempotency-key") || req.header("x-idempotency-key");
     const idempotencyKey =
@@ -362,6 +366,7 @@ router.get(
 
 router.post(
   "/orders/:id/attest",
+  mutatingRateLimiter,
   asyncHandler(async (req, res) => {
     const orderId = String(req.params.id);
     const order = getOrderById(orderId);
@@ -388,6 +393,7 @@ router.post(
 
 router.post(
   "/orders/:id/claim",
+  mutatingRateLimiter,
   asyncHandler(async (req, res) => {
     const orderId = String(req.params.id);
     const order = getOrderById(orderId);
@@ -404,6 +410,7 @@ router.post(
 
 router.post(
   "/orders/:id/reclaim",
+  mutatingRateLimiter,
   asyncHandler(async (req, res) => {
     const orderId = String(req.params.id);
     const order = getOrderById(orderId);
@@ -420,6 +427,7 @@ router.post(
 
 router.post(
   "/orders/:id/cancel",
+  mutatingRateLimiter,
   asyncHandler(async (req, res) => {
     const orderId = String(req.params.id);
     const order = getOrderById(orderId);
@@ -440,6 +448,7 @@ router.post(
 
 router.post(
   "/orders/:id/dispute",
+  mutatingRateLimiter,
   asyncHandler(async (req, res) => {
     const orderId = String(req.params.id);
     const order = getOrderById(orderId);
@@ -469,6 +478,7 @@ router.post(
 
 router.post(
   "/orders/:id/resolve",
+  mutatingRateLimiter,
   asyncHandler(async (req, res) => {
     const orderId = String(req.params.id);
     const order = getOrderById(orderId);
@@ -499,6 +509,7 @@ router.post(
 
 router.post(
   "/orders/:id/build-tx",
+  mutatingRateLimiter,
   asyncHandler(async (req, res) => {
     const orderId = String(req.params.id);
     const order = getOrderById(orderId);
@@ -544,6 +555,7 @@ router.post(
 
 router.post(
   ["/tx/submit", "/orders/:id/submit"],
+  mutatingRateLimiter,
   asyncHandler(async (req, res) => {
     const parseResult = submitSignedTxSchema.safeParse(req.body);
     if (!parseResult.success) {

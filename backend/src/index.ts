@@ -42,6 +42,9 @@ export function createCorsOptions(
 }
 
 export const app = express();
+if (config.trustProxy !== false) {
+  app.set("trust proxy", config.trustProxy);
+}
 app.use(helmet());
 app.use(cors(createCorsOptions()));
 app.use(express.json());
