@@ -207,9 +207,7 @@ export const iotEventSchema = z.object({
   orderId: z.string().uuid("orderId must be a valid UUID"),
   deviceId: z.string().min(1, "deviceId is required"),
   eventType: z.enum(["geofence_entry", "rfid_scan", "telemetry_reading"], {
-    errorMap: () => ({
-      message: "eventType must be 'geofence_entry', 'rfid_scan', or 'telemetry_reading'",
-    }),
+    message: "eventType must be 'geofence_entry', 'rfid_scan', or 'telemetry_reading'",
   }),
   coordinates: z
     .object({
@@ -232,7 +230,7 @@ export const iotEventSchema = z.object({
       message: "attestorAddress must be a valid Stellar public key (G...)",
     })
     .optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type CreateOrderBody = z.infer<typeof createOrderSchema>;
