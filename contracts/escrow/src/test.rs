@@ -657,4 +657,145 @@ fn test_rotate_attestor_requires_arbiter_auth() {
     assert!(client.try_rotate_attestor(&attestor1, &new_attestor).is_ok());
 }
 
+#[test]
+fn test_extend_deadline_success() {
+    let t = setup(1000);
+    let initial_deadline = t.client.get_order().deadline;
+    let new_deadline = initial_deadline + 5000;
+
+    t.client.extend_deadline(&new_deadline);
+    assert_eq!(t.client.get_order().deadline, new_deadline);
+}
+
+#[test]
+fn test_extend_deadline_requires_both_buyer_and_seller_auth() {
+    use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+    use soroban_sdk::IntoVal;
+
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let attestor1 = Address::generate(&env);
+    let attestor2 = Address::generate(&env);
+    let attestor3 = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+
+    let (token, asset_client, _) = create_token(&env, &admin);
+    let amount: i128 = 1_000_000_000;
+    asset_client.mint(&buyer, &amount);
+
+    let contract_id = env.register(EscrowContract, ());
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let initial_deadline = env.ledger().timestamp() + 1000;
+    let attestors = vec![&env, attestor1.clone(), attestor2.clone(), attestor3.clone()];
+    client.create(
+        &buyer,
+        &seller,
+        &attestors,
+        &2,
+        &arbiter,
+        &token,
+        &amount,
+        &initial_deadline,
+    );
+
+    let new_deadline = initial_deadline + 5000;
+
+    // Buyer auth only -> fails
+    env.mock_auths(&[MockAuth {
+        address: &buyer,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "extend_deadline",
+            args: (new_deadline,).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(client.try_extend_deadline(&new_deadline).is_err());
+
+    // Seller auth only -> fails
+    env.mock_auths(&[MockAuth {
+        address: &seller,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "extend_deadline",
+            args: (new_deadline,).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(client.try_extend_deadline(&new_deadline).is_err());
+
+    // Both buyer and seller auth -> succeeds
+    env.mock_auths(&[
+        MockAuth {
+            address: &buyer,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "extend_deadline",
+                args: (new_deadline,).into_val(&env),
+                sub_invokes: &[],
+            },
+        },
+        MockAuth {
+            address: &seller,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "extend_deadline",
+                args: (new_deadline,).into_val(&env),
+                sub_invokes: &[],
+            },
+        },
+    ]);
+    assert!(client.try_extend_deadline(&new_deadline).is_ok());
+    assert_eq!(client.get_order().deadline, new_deadline);
+}
+
+#[test]
+fn test_extend_deadline_rejects_shorter_or_equal_deadline() {
+    let t = setup(1000);
+    let initial_deadline = t.client.get_order().deadline;
+
+    // Equal deadline -> fails
+    let res = t.client.try_extend_deadline(&initial_deadline);
+    assert_eq!(res, Err(Ok(Error::DeadlineNotExtended)));
+
+    // Shorter deadline -> fails
+    let res = t.client.try_extend_deadline(&(initial_deadline - 100));
+    assert_eq!(res, Err(Ok(Error::DeadlineNotExtended)));
+}
+
+#[test]
+fn test_extend_deadline_rejects_terminal_status() {
+    let t = setup(1000);
+    t.client.attest(&t.attestor1);
+    t.client.attest(&t.attestor2);
+    t.client.claim();
+    assert_eq!(t.client.get_order().status, OrderStatus::Claimed);
+
+    let res = t.client.try_extend_deadline(&(t.client.get_order().deadline + 5000));
+    assert_eq!(res, Err(Ok(Error::WrongStatus)));
+}
+
+#[test]
+fn test_extend_deadline_allows_attestation_in_extended_window() {
+    let t = setup(1000);
+    let initial_deadline = t.client.get_order().deadline;
+    let new_deadline = initial_deadline + 5000;
+
+    t.client.extend_deadline(&new_deadline);
+
+    // Advance past initial deadline but before new deadline
+    t.env.ledger().set_timestamp(initial_deadline + 500);
+
+    // Attestation succeeds
+    t.client.attest(&t.attestor1);
+    t.client.attest(&t.attestor2);
+    assert_eq!(t.client.get_order().status, OrderStatus::Attested);
+}
+
+
 
