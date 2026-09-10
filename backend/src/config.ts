@@ -88,6 +88,8 @@ export function resolveConfig(env: NodeJS.ProcessEnv = process.env) {
     arbiterApiKey: env.ARBITER_API_KEY ?? "demo-arbiter-token",
     adminApiKey: env.ADMIN_API_KEY ?? "demo-admin-token",
     corsAllowedOrigins: parseCorsOrigins(env.CORS_ALLOWED_ORIGINS),
+    webhookSigningSecret: env.WEBHOOK_SIGNING_SECRET ?? "",
+    webhookSignatureToleranceSeconds: Number(env.WEBHOOK_SIGNATURE_TOLERANCE_SECONDS ?? 300),
     rateLimitEnabled: env.RATE_LIMIT_ENABLED !== "false" && env.RATE_LIMIT_ENABLED !== "0",
     rateLimitWindowMs: Number(env.RATE_LIMIT_WINDOW_MS ?? 60000),
     rateLimitMaxMutating: Number(env.RATE_LIMIT_MAX_MUTATING ?? 30),

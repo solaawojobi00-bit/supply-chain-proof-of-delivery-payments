@@ -278,6 +278,68 @@ When creating an order via `POST /orders`, callers can provide an optional `webh
 - **Non-blocking**: Webhook delivery failures never fail or roll back the underlying on-chain state transition.
 - **Automatic Retries**: Failed deliveries (network errors, timeouts, or 4xx/5xx responses) are retried up to 3 times with exponential backoff and logged for auditing.
 
+### Signature Verification
+
+These payloads describe state transitions that gate real payments, so a consumer must confirm a delivery genuinely came from this service before acting on it. Set `WEBHOOK_SIGNING_SECRET` (see [`backend/.env.example`](backend/.env.example)) and every outgoing delivery carries two additional headers:
+
+| Header | Value |
+| --- | --- |
+| `X-Signature` | `sha256=<hex>` — HMAC-SHA256 digest, scheme-prefixed so the algorithm can be rotated later |
+| `X-Signature-Timestamp` | Unix seconds at the time the delivery was signed |
+
+The signed string is the timestamp and the **raw request body** joined by a period:
+
+```
+<X-Signature-Timestamp> + "." + <raw body bytes>
+```
+
+Two details matter when implementing a consumer:
+
+1. **Verify against the raw body, before JSON parsing.** Re-serializing the parsed object can reorder keys and produce a different digest, which fails verification intermittently and is miserable to debug.
+2. **Check the timestamp.** It is inside the signed string precisely so it cannot be rewound. Reject deliveries outside a tolerance window — 300 seconds is the recommended default, and is what `WEBHOOK_SIGNATURE_TOLERANCE_SECONDS` documents.
+
+#### Worked example (Node / Express)
+
+```js
+import { createHmac, timingSafeEqual } from "node:crypto";
+import express from "express";
+
+const SECRET = process.env.WEBHOOK_SIGNING_SECRET;
+const TOLERANCE_SECONDS = 300;
+
+const app = express();
+
+// express.raw keeps the exact transmitted bytes. express.json would discard
+// them, leaving nothing to verify the signature against.
+app.post("/webhook", express.raw({ type: "application/json" }), (req, res) => {
+  const signature = req.header("X-Signature") ?? "";
+  const timestamp = req.header("X-Signature-Timestamp") ?? "";
+
+  const age = Math.abs(Math.floor(Date.now() / 1000) - Number(timestamp));
+  if (!timestamp || Number.isNaN(age) || age > TOLERANCE_SECONDS) {
+    return res.status(400).send("stale or missing timestamp");
+  }
+
+  const rawBody = req.body.toString("utf8");
+  const digest = createHmac("sha256", SECRET).update(`${timestamp}.${rawBody}`, "utf8").digest("hex");
+  const expected = Buffer.from(`sha256=${digest}`, "utf8");
+  const received = Buffer.from(signature, "utf8");
+
+  // timingSafeEqual throws on a length mismatch, so compare lengths first.
+  if (expected.length !== received.length || !timingSafeEqual(expected, received)) {
+    return res.status(401).send("invalid signature");
+  }
+
+  const event = JSON.parse(rawBody); // safe to parse only after verifying
+  console.log("verified", event.event, event.orderId);
+  res.sendStatus(204);
+});
+```
+
+If `WEBHOOK_SIGNING_SECRET` is unset the headers are omitted, deliveries go out unsigned, and the backend logs a `webhook_unsigned` warning on every dispatch. That is acceptable for local development and should not be used anywhere a consumer acts on the payload. The secret is never written to logs.
+
+Retries of the same delivery reuse the original signature and timestamp, so a consumer may safely deduplicate on the signature value.
+
 ## API
 
 A complete machine-readable OpenAPI 3.0 specification is available at [`backend/openapi.yaml`](backend/openapi.yaml).
