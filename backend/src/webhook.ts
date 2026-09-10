@@ -1,5 +1,14 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { config as appConfig } from "./config.js";
 import type { OrderRow } from "./db.js";
 import { logStructured } from "./logger.js";
+
+/** Header carrying the `sha256=<hex>` HMAC over the transmitted body. */
+export const SIGNATURE_HEADER = "X-Signature";
+/** Header carrying the Unix-seconds timestamp that is covered by the signature. */
+export const SIGNATURE_TIMESTAMP_HEADER = "X-Signature-Timestamp";
+/** Scheme prefix on the signature value, so the algorithm can be rotated later. */
+export const SIGNATURE_SCHEME = "sha256";
 
 export type WebhookEventType =
   | "order.created"
@@ -35,9 +44,58 @@ export interface WebhookRetryConfig {
   initialBackoffMs?: number;
   backoffMultiplier?: number;
   timeoutMs?: number;
+  /** Overrides WEBHOOK_SIGNING_SECRET. Empty string disables signing. */
+  signingSecret?: string;
 }
 
-const DEFAULT_RETRY_CONFIG: Required<WebhookRetryConfig> = {
+/**
+ * Builds the string the HMAC is computed over.
+ *
+ * The timestamp is prefixed rather than sent alongside so that it is covered by
+ * the signature: a consumer that rejects stale timestamps can trust the one it
+ * verified against, and an attacker cannot rewind it to replay an old delivery.
+ */
+export function buildSignaturePayload(rawBody: string, timestamp: string): string {
+  return `${timestamp}.${rawBody}`;
+}
+
+/**
+ * Computes the `sha256=<hex>` signature for an outgoing delivery.
+ *
+ * `rawBody` must be the exact string transmitted as the request body. Signing a
+ * re-serialization risks a different key order than the bytes on the wire, which
+ * fails verification intermittently and is painful to diagnose.
+ */
+export function computeWebhookSignature(
+  rawBody: string,
+  timestamp: string,
+  secret: string,
+): string {
+  const digest = createHmac("sha256", secret)
+    .update(buildSignaturePayload(rawBody, timestamp), "utf8")
+    .digest("hex");
+  return `${SIGNATURE_SCHEME}=${digest}`;
+}
+
+/**
+ * Constant-time comparison of two signature values. Exported so consumers in
+ * this repo (and the documented verification example) share one implementation.
+ */
+export function verifyWebhookSignature(
+  rawBody: string,
+  timestamp: string,
+  secret: string,
+  receivedSignature: string,
+): boolean {
+  const expected = computeWebhookSignature(rawBody, timestamp, secret);
+  const expectedBuf = Buffer.from(expected, "utf8");
+  const receivedBuf = Buffer.from(receivedSignature, "utf8");
+  // timingSafeEqual throws on a length mismatch, which is itself a non-match.
+  if (expectedBuf.length !== receivedBuf.length) return false;
+  return timingSafeEqual(expectedBuf, receivedBuf);
+}
+
+const DEFAULT_RETRY_CONFIG: Required<Omit<WebhookRetryConfig, "signingSecret">> = {
   maxAttempts: 3,
   initialBackoffMs: 100,
   backoffMultiplier: 2,
@@ -51,12 +109,39 @@ function sleep(ms: number): Promise<void> {
 export async function sendWebhookWithRetry(
   url: string,
   payload: WebhookEventPayload,
-  config: WebhookRetryConfig = {},
+  retryConfig: WebhookRetryConfig = {},
 ): Promise<{ success: boolean; attempts: number; error?: string }> {
   const { maxAttempts, initialBackoffMs, backoffMultiplier, timeoutMs } = {
     ...DEFAULT_RETRY_CONFIG,
-    ...config,
+    ...retryConfig,
   };
+  const signingSecret = retryConfig.signingSecret ?? appConfig.webhookSigningSecret;
+
+  // Serialize once and reuse the identical string for both the signature and the
+  // request body, so the signature always covers the exact transmitted bytes.
+  const rawBody = JSON.stringify(payload);
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "User-Agent": "SupplyChainEscrow-Webhook/0.1.0",
+    "X-Escrow-Event": payload.event,
+  };
+
+  if (signingSecret) {
+    headers[SIGNATURE_TIMESTAMP_HEADER] = timestamp;
+    headers[SIGNATURE_HEADER] = computeWebhookSignature(rawBody, timestamp, signingSecret);
+  } else {
+    logStructured({
+      type: "webhook_unsigned",
+      level: "warn",
+      url,
+      event: payload.event,
+      orderId: payload.orderId,
+      message:
+        "WEBHOOK_SIGNING_SECRET is not configured; delivery sent unsigned and cannot be verified by the consumer",
+    });
+  }
 
   let attempt = 0;
   let currentBackoff = initialBackoffMs;
@@ -67,12 +152,8 @@ export async function sendWebhookWithRetry(
     try {
       const response = await fetch(url, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "User-Agent": "SupplyChainEscrow-Webhook/0.1.0",
-          "X-Escrow-Event": payload.event,
-        },
-        body: JSON.stringify(payload),
+        headers,
+        body: rawBody,
         signal: AbortSignal.timeout(timeoutMs),
       });
 

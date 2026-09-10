@@ -1,8 +1,13 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   buildWebhookPayload,
+  computeWebhookSignature,
   dispatchWebhook,
   sendWebhookWithRetry,
+  verifyWebhookSignature,
+  SIGNATURE_HEADER,
+  SIGNATURE_TIMESTAMP_HEADER,
   type WebhookEventPayload,
 } from "../src/webhook.js";
 import type { OrderRow } from "../src/db.js";
@@ -227,6 +232,199 @@ describe("Webhook Dispatcher & Retries (webhook.ts)", () => {
           initialBackoffMs: 1,
         }),
       ).resolves.not.toThrow();
+    });
+  });
+
+  describe("HMAC-SHA256 payload signing (Issue #77)", () => {
+    // Deliberately a low-entropy, obviously-fake identifier: a realistic
+    // 32-byte hex value trips the gitleaks generic-api-key rule in CI. The
+    // signature scheme does not care about the secret's shape.
+    const SECRET = "webhook-signing-secret-for-tests";
+
+    const signedPayload: WebhookEventPayload = {
+      event: "order.claimed",
+      orderId: mockOrder.id,
+      contractId: mockOrder.contract_id,
+      numericId: 101,
+      buyerAddress: mockOrder.buyer_address,
+      sellerAddress: mockOrder.seller_address,
+      attestorAddress: mockOrder.attestor_address,
+      attestors: [mockOrder.attestor_address],
+      threshold: 1,
+      confirmations: [],
+      arbiterAddress: null,
+      amountStroops: "10000000",
+      deadline: 1735689600,
+      status: "Claimed",
+      lifecycle: "claimed",
+      txHash: "tx-hash",
+      timestamp: "2026-09-10T00:00:00.000Z",
+    };
+
+    function captureDelivery(fetchSpy: ReturnType<typeof vi.spyOn>) {
+      const [, opts] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+      const headers = opts.headers as Record<string, string>;
+      return {
+        body: opts.body as string,
+        signature: headers[SIGNATURE_HEADER],
+        timestamp: headers[SIGNATURE_TIMESTAMP_HEADER],
+      };
+    }
+
+    it("matches a known signature vector", () => {
+      // Locks the scheme: HMAC-SHA256 over "<timestamp>.<raw body>", hex encoded.
+      const signature = computeWebhookSignature("{}", "1757462400", "test-secret");
+      const expected = createHmac("sha256", "test-secret")
+        .update("1757462400.{}", "utf8")
+        .digest("hex");
+      expect(signature).toBe(`sha256=${expected}`);
+      expect(signature).toMatch(/^sha256=[0-9a-f]{64}$/);
+    });
+
+    it("sends X-Signature and X-Signature-Timestamp headers when a secret is configured", async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce({ ok: true, status: 200 } as Response);
+
+      await sendWebhookWithRetry("https://example.com/webhook", signedPayload, {
+        maxAttempts: 1,
+        initialBackoffMs: 1,
+        signingSecret: SECRET,
+      });
+
+      const { signature, timestamp } = captureDelivery(fetchSpy);
+      expect(signature).toMatch(/^sha256=[0-9a-f]{64}$/);
+      expect(timestamp).toMatch(/^\d+$/);
+    });
+
+    it("signs the exact transmitted bytes, not a re-serialization", async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce({ ok: true, status: 200 } as Response);
+
+      await sendWebhookWithRetry("https://example.com/webhook", signedPayload, {
+        maxAttempts: 1,
+        initialBackoffMs: 1,
+        signingSecret: SECRET,
+      });
+
+      const { body, signature, timestamp } = captureDelivery(fetchSpy);
+      // Verifying against the captured body proves the signature covers the
+      // bytes actually sent; a re-serialization with different key order would
+      // not reproduce this digest.
+      expect(verifyWebhookSignature(body, timestamp, SECRET, signature)).toBe(true);
+    });
+
+    it("detects a tampered body", async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce({ ok: true, status: 200 } as Response);
+
+      await sendWebhookWithRetry("https://example.com/webhook", signedPayload, {
+        maxAttempts: 1,
+        initialBackoffMs: 1,
+        signingSecret: SECRET,
+      });
+
+      const { body, signature, timestamp } = captureDelivery(fetchSpy);
+      const tampered = body.replace('"amountStroops":"10000000"', '"amountStroops":"99999999"');
+      expect(tampered).not.toBe(body);
+      expect(verifyWebhookSignature(tampered, timestamp, SECRET, signature)).toBe(false);
+    });
+
+    it("detects a rewound timestamp, so an old delivery cannot be replayed", async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce({ ok: true, status: 200 } as Response);
+
+      await sendWebhookWithRetry("https://example.com/webhook", signedPayload, {
+        maxAttempts: 1,
+        initialBackoffMs: 1,
+        signingSecret: SECRET,
+      });
+
+      const { body, signature, timestamp } = captureDelivery(fetchSpy);
+      const rewound = (Number(timestamp) - 3600).toString();
+      expect(verifyWebhookSignature(body, rewound, SECRET, signature)).toBe(false);
+    });
+
+    it("rejects a signature produced with a different secret", async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce({ ok: true, status: 200 } as Response);
+
+      await sendWebhookWithRetry("https://example.com/webhook", signedPayload, {
+        maxAttempts: 1,
+        initialBackoffMs: 1,
+        signingSecret: SECRET,
+      });
+
+      const { body, signature, timestamp } = captureDelivery(fetchSpy);
+      expect(verifyWebhookSignature(body, timestamp, "wrong-secret", signature)).toBe(false);
+    });
+
+    it("keeps one signature across retries of the same delivery", async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          statusText: "Internal Server Error",
+        } as Response)
+        .mockResolvedValueOnce({ ok: true, status: 200 } as Response);
+
+      await sendWebhookWithRetry("https://example.com/webhook", signedPayload, {
+        maxAttempts: 2,
+        initialBackoffMs: 1,
+        signingSecret: SECRET,
+      });
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      const [, first] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+      const [, second] = fetchSpy.mock.calls[1] as unknown as [string, RequestInit];
+      const firstHeaders = first.headers as Record<string, string>;
+      const secondHeaders = second.headers as Record<string, string>;
+      expect(secondHeaders[SIGNATURE_HEADER]).toBe(firstHeaders[SIGNATURE_HEADER]);
+      expect(secondHeaders[SIGNATURE_TIMESTAMP_HEADER]).toBe(
+        firstHeaders[SIGNATURE_TIMESTAMP_HEADER],
+      );
+    });
+
+    it("omits signature headers and warns when no secret is configured", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce({ ok: true, status: 200 } as Response);
+
+      await sendWebhookWithRetry("https://example.com/webhook", signedPayload, {
+        maxAttempts: 1,
+        initialBackoffMs: 1,
+        signingSecret: "",
+      });
+
+      const { signature, timestamp } = captureDelivery(fetchSpy);
+      expect(signature).toBeUndefined();
+      expect(timestamp).toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("webhook_unsigned"));
+    });
+
+    it("never logs the signing secret", async () => {
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
+
+      await sendWebhookWithRetry("https://example.com/webhook", signedPayload, {
+        maxAttempts: 2,
+        initialBackoffMs: 1,
+        signingSecret: SECRET,
+      });
+
+      const emitted = [...logSpy.mock.calls, ...warnSpy.mock.calls, ...errorSpy.mock.calls]
+        .flat()
+        .join("\n");
+      expect(emitted.length).toBeGreaterThan(0);
+      expect(emitted).not.toContain(SECRET);
     });
   });
 });
