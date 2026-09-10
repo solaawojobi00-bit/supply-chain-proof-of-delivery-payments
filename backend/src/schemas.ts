@@ -340,6 +340,61 @@ export type SubmitSignedTxBody = z.infer<typeof submitSignedTxSchema>;
 export type BuildTxBody = z.infer<typeof buildTxSchema>;
 export type IoTEventBody = z.infer<typeof iotEventSchema>;
 
+/** Sort keys accepted by `GET /attestors`. */
+export const ATTESTOR_SORT_KEYS = [
+  "reputationScore",
+  "successRate",
+  "disputeRate",
+  "feeBps",
+] as const;
+export type AttestorSortKey = (typeof ATTESTOR_SORT_KEYS)[number];
+
+/**
+ * Query params are always strings, so numeric filters are coerced and then
+ * range-checked. A non-numeric value fails coercion and surfaces as a 400
+ * rather than silently becoming NaN and dropping the filter.
+ */
+function numericQueryParam(field: string, min: number, max: number) {
+  return z
+    .string()
+    .transform((val, ctx) => {
+      const num = Number(val);
+      if (val.trim() === "" || Number.isNaN(num)) {
+        ctx.addIssue({ code: "custom", message: `${field} must be a number` });
+        return z.NEVER;
+      }
+      return num;
+    })
+    .pipe(
+      z
+        .number()
+        .min(min, { message: `${field} must be >= ${min}` })
+        .max(max, { message: `${field} must be <= ${max}` }),
+    )
+    .optional();
+}
+
+export const listAttestorsQuerySchema = z
+  .object({
+    sort: z
+      .enum(ATTESTOR_SORT_KEYS, {
+        message: `sort must be one of: ${ATTESTOR_SORT_KEYS.join(", ")}`,
+      })
+      .optional(),
+    order: z.enum(["asc", "desc"], { message: "order must be one of: asc, desc" }).optional(),
+    minSuccessRate: numericQueryParam("minSuccessRate", 0, 1),
+    maxDisputeRate: numericQueryParam("maxDisputeRate", 0, 1),
+    maxFeeBps: numericQueryParam("maxFeeBps", 0, 10000),
+    minCompletedOrders: numericQueryParam("minCompletedOrders", 0, Number.MAX_SAFE_INTEGER),
+    minScore: numericQueryParam("minScore", 0, 100),
+    coverageArea: z.string().min(1, { message: "coverageArea must not be empty" }).optional(),
+    active: z.enum(["true", "false"], { message: "active must be one of: true, false" }).optional(),
+  })
+  // Reject unknown params so a client-side typo is visible rather than ignored.
+  .strict();
+
+export type ListAttestorsQuery = z.infer<typeof listAttestorsQuerySchema>;
+
 export function formatZodError(error: z.ZodError): string {
   const issues = error.issues || (error as unknown as { errors?: z.ZodIssue[] }).errors || [];
   return issues

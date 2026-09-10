@@ -256,10 +256,42 @@ export function getAttestorByAddress(address: string): AttestorWithReputation | 
 /**
  * List registered attestors with calculated reputation summaries and optional filters
  */
+export type AttestorSortKey = "reputationScore" | "successRate" | "disputeRate" | "feeBps";
+
+/**
+ * Default direction per sort key. Score-like fields read best highest-first,
+ * whereas a fee is better when lower, so `feeBps` defaults the other way.
+ */
+const DEFAULT_SORT_ORDER: Record<AttestorSortKey, "asc" | "desc"> = {
+  reputationScore: "desc",
+  successRate: "desc",
+  disputeRate: "asc",
+  feeBps: "asc",
+};
+
+function sortValue(a: AttestorWithReputation, key: AttestorSortKey): number {
+  switch (key) {
+    case "feeBps":
+      return a.feeBps;
+    case "successRate":
+      return a.reputation.successRate;
+    case "disputeRate":
+      return a.reputation.disputeRate;
+    case "reputationScore":
+      return a.reputation.reputationScore;
+  }
+}
+
 export function listAttestors(filters?: {
   coverageArea?: string;
   activeOnly?: boolean;
   minScore?: number;
+  minSuccessRate?: number;
+  maxDisputeRate?: number;
+  maxFeeBps?: number;
+  minCompletedOrders?: number;
+  sort?: AttestorSortKey;
+  order?: "asc" | "desc";
 }): AttestorWithReputation[] {
   let query = `SELECT * FROM attestor_directory WHERE 1=1`;
   const params: unknown[] = [];
@@ -281,14 +313,41 @@ export function listAttestors(filters?: {
   if (typeof filters?.minScore === "number") {
     results = results.filter((a) => a.reputation.reputationScore >= filters.minScore!);
   }
+  if (typeof filters?.minSuccessRate === "number") {
+    results = results.filter((a) => a.reputation.successRate >= filters.minSuccessRate!);
+  }
+  if (typeof filters?.maxDisputeRate === "number") {
+    results = results.filter((a) => a.reputation.disputeRate <= filters.maxDisputeRate!);
+  }
+  if (typeof filters?.maxFeeBps === "number") {
+    results = results.filter((a) => a.feeBps <= filters.maxFeeBps!);
+  }
+  // Guards the thin-sample problem: an attestor with one successful order shows
+  // a 100% success rate, which should not outrank a long track record.
+  if (typeof filters?.minCompletedOrders === "number") {
+    results = results.filter((a) => a.reputation.totalAssigned >= filters.minCompletedOrders!);
+  }
 
-  // Sort by highest reputation score first, then most completed orders
-  results.sort((a, b) => {
-    if (b.reputation.reputationScore !== a.reputation.reputationScore) {
-      return b.reputation.reputationScore - a.reputation.reputationScore;
-    }
-    return b.reputation.totalAttested - a.reputation.totalAttested;
-  });
+  if (filters?.sort) {
+    const key = filters.sort;
+    const direction = filters.order ?? DEFAULT_SORT_ORDER[key];
+    const multiplier = direction === "asc" ? 1 : -1;
+    results.sort((a, b) => {
+      const diff = (sortValue(a, key) - sortValue(b, key)) * multiplier;
+      // Tie-break on track record so ordering is stable and a thin sample does
+      // not float above an equally-scored attestor with real volume.
+      if (diff !== 0) return diff;
+      return b.reputation.totalAttested - a.reputation.totalAttested;
+    });
+  } else {
+    // Default: highest reputation score first, then most completed orders
+    results.sort((a, b) => {
+      if (b.reputation.reputationScore !== a.reputation.reputationScore) {
+        return b.reputation.reputationScore - a.reputation.reputationScore;
+      }
+      return b.reputation.totalAttested - a.reputation.totalAttested;
+    });
+  }
 
   return results;
 }
