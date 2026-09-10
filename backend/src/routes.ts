@@ -29,6 +29,7 @@ import {
   disputeOrderSchema,
   formatZodError,
   iotEventSchema,
+  listAttestorsQuerySchema,
   listOrdersQuerySchema,
   registerAttestorSchema,
   resolveDisputeSchema,
@@ -90,13 +91,32 @@ router.post(
 router.get(
   "/attestors",
   asyncHandler(async (req, res) => {
-    const { coverageArea, minScore, active } = req.query as Record<string, string | undefined>;
-    const minScoreNum = minScore ? Number(minScore) : undefined;
-    const activeOnly = active !== undefined ? active === "true" : true;
+    const parseResult = listAttestorsQuerySchema.safeParse(req.query);
+    if (!parseResult.success) {
+      throw new HttpError(400, formatZodError(parseResult.error));
+    }
+    const {
+      coverageArea,
+      minScore,
+      active,
+      sort,
+      order,
+      minSuccessRate,
+      maxDisputeRate,
+      maxFeeBps,
+      minCompletedOrders,
+    } = parseResult.data;
+
     const attestors = listAttestors({
       coverageArea,
-      minScore: !isNaN(minScoreNum!) ? minScoreNum : undefined,
-      activeOnly,
+      minScore,
+      activeOnly: active !== undefined ? active === "true" : true,
+      sort,
+      order,
+      minSuccessRate,
+      maxDisputeRate,
+      maxFeeBps,
+      minCompletedOrders,
     });
     res.json(attestors);
   }),

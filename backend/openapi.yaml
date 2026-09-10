@@ -78,6 +78,59 @@ paths:
           schema:
             type: boolean
           description: Filter active attestors (defaults to true)
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [reputationScore, successRate, disputeRate, feeBps]
+          description: >
+            Field to sort by. An unrecognised value is rejected with a 400 rather than
+            silently ignored, so a client-side typo is visible.
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+          description: >
+            Sort direction. Defaults per field: desc for reputationScore and successRate,
+            asc for disputeRate and feeBps.
+        - name: minSuccessRate
+          in: query
+          required: false
+          schema:
+            type: number
+            minimum: 0
+            maximum: 1
+          description: Only return attestors whose success rate is at or above this floor (0.0 - 1.0)
+        - name: maxDisputeRate
+          in: query
+          required: false
+          schema:
+            type: number
+            minimum: 0
+            maximum: 1
+          description: Only return attestors whose dispute rate is at or below this ceiling (0.0 - 1.0)
+        - name: maxFeeBps
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 10000
+          description: Only return attestors charging at or below this fee, in basis points
+        - name: minCompletedOrders
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: >
+            Minimum number of assigned orders. Guards the thin-sample problem: an attestor
+            with a single successful order reports a 100% success rate. Sample sizes are
+            always available on the response via reputation.totalAssigned and
+            reputation.totalAttested.
       responses:
         "200":
           description: List of registered attestors with reputation summaries
@@ -87,6 +140,12 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Attestor"
+        "400":
+          description: Invalid query parameter (unknown sort key, out-of-range value, or unrecognised param)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /attestors/{id}:
     get:
