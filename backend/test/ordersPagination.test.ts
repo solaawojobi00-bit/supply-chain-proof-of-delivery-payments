@@ -203,7 +203,9 @@ describe("Orders Filtering & Keyset Pagination (Issue #73)", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(
-        body.orders.every((o: { status: string }) => o.status === "Created" || o.status === "Attested"),
+        body.orders.every(
+          (o: { status: string }) => o.status === "Created" || o.status === "Attested",
+        ),
       ).toBe(true);
     });
 
@@ -211,7 +213,9 @@ describe("Orders Filtering & Keyset Pagination (Issue #73)", () => {
       const res = await fetch(`${baseUrl}/orders?buyer=${buyer2}`);
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.orders.every((o: { buyerAddress: string }) => o.buyerAddress === buyer2)).toBe(true);
+      expect(body.orders.every((o: { buyerAddress: string }) => o.buyerAddress === buyer2)).toBe(
+        true,
+      );
       expect(body.orders.length).toBe(2);
     });
 
@@ -219,7 +223,9 @@ describe("Orders Filtering & Keyset Pagination (Issue #73)", () => {
       const res = await fetch(`${baseUrl}/orders?seller=${seller2}`);
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.orders.every((o: { sellerAddress: string }) => o.sellerAddress === seller2)).toBe(true);
+      expect(body.orders.every((o: { sellerAddress: string }) => o.sellerAddress === seller2)).toBe(
+        true,
+      );
     });
 
     it("filters by attestor address including M-of-N roster matches", async () => {
