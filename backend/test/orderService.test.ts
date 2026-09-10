@@ -83,7 +83,7 @@ describe("Order Service Unit & Integration (orderService.ts)", () => {
     expect(fetched.id).toBe(order.id);
 
     const all = getAllOrders();
-    expect(all.some((o) => o.id === order.id)).toBe(true);
+    expect(all.orders.some((o) => o.id === order.id)).toBe(true);
   });
 
   it("throws 404 when querying nonexistent order", () => {

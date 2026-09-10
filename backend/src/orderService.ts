@@ -37,11 +37,13 @@ import { config } from "./config.js";
 import {
   getOrder,
   insertOrder,
-  listOrders,
+  queryOrders,
   updateOrderAttestation,
   updateOrderDispute,
   updateOrderStatus,
+  type ListOrdersOptions,
   type OrderRow,
+  type PaginatedOrdersResult,
 } from "./db.js";
 import { HttpError } from "./httpError.js";
 import { buyerKeypair, deployerKeypair, findLocalSigner } from "./keys.js";
@@ -185,8 +187,8 @@ export function getOrderById(id: string): OrderRow {
   return requireOrder(id);
 }
 
-export function getAllOrders(): OrderRow[] {
-  return listOrders();
+export function getAllOrders(options?: ListOrdersOptions): PaginatedOrdersResult {
+  return queryOrders(options);
 }
 
 export async function getOrderWithChainState(id: string) {

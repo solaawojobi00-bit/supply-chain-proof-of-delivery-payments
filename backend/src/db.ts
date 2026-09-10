@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { config } from "./config.js";
+import { HttpError } from "./httpError.js";
 
 export type OrderStatus =
   "Created" | "Attested" | "Claimed" | "Reclaimed" | "Cancelled" | "Disputed";
@@ -174,6 +175,42 @@ try {
   // column already exists
 }
 
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+  CREATE INDEX IF NOT EXISTS idx_orders_buyer ON orders(buyer_address);
+  CREATE INDEX IF NOT EXISTS idx_orders_seller ON orders(seller_address);
+  CREATE INDEX IF NOT EXISTS idx_orders_attestor ON orders(attestor_address);
+  CREATE INDEX IF NOT EXISTS idx_orders_created_at_id ON orders(created_at DESC, id DESC);
+`);
+
+export interface OrderCursor {
+  createdAt: string;
+  id: string;
+}
+
+export function encodeOrderCursor(row: Pick<OrderRow, "created_at" | "id">): string {
+  const payload = JSON.stringify({ createdAt: row.created_at, id: row.id });
+  return Buffer.from(payload, "utf8").toString("base64url");
+}
+
+export function decodeOrderCursor(cursorStr: string): OrderCursor {
+  try {
+    const json = Buffer.from(cursorStr, "base64url").toString("utf8");
+    const parsed = JSON.parse(json);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      typeof parsed.createdAt === "string" &&
+      typeof parsed.id === "string"
+    ) {
+      return { createdAt: parsed.createdAt, id: parsed.id };
+    }
+  } catch {
+    // fallback to throwing HttpError 400
+  }
+  throw new HttpError(400, "Invalid pagination cursor format");
+}
+
 export function insertOrder(row: OrderRow): void {
   db.prepare(
     `INSERT INTO orders (
@@ -225,8 +262,110 @@ export function getOrderByIdempotencyKey(key: string): OrderRow | undefined {
     OrderRow | undefined;
 }
 
+export interface ListOrdersOptions {
+  status?: string[];
+  buyer?: string;
+  seller?: string;
+  attestor?: string;
+  arbiter?: string;
+  role?: "buyer" | "seller" | "attestor" | "arbiter";
+  address?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface PaginatedOrdersResult {
+  orders: OrderRow[];
+  next_cursor: string | null;
+}
+
+export function queryOrders(options: ListOrdersOptions = {}): PaginatedOrdersResult {
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+  const whereClauses: string[] = [];
+  const params: Record<string, unknown> = {};
+
+  if (options.status && options.status.length > 0) {
+    const statusPlaceholders = options.status.map((_, i) => `@status_${i}`);
+    options.status.forEach((st, i) => {
+      params[`status_${i}`] = st.toLowerCase();
+    });
+    whereClauses.push(`LOWER(status) IN (${statusPlaceholders.join(", ")})`);
+  }
+
+  if (options.buyer) {
+    whereClauses.push(`buyer_address = @buyer`);
+    params.buyer = options.buyer;
+  }
+
+  if (options.seller) {
+    whereClauses.push(`seller_address = @seller`);
+    params.seller = options.seller;
+  }
+
+  if (options.attestor) {
+    whereClauses.push(`(attestor_address = @attestor OR attestors LIKE '%' || @attestor || '%')`);
+    params.attestor = options.attestor;
+  }
+
+  if (options.arbiter) {
+    whereClauses.push(`arbiter_address = @arbiter`);
+    params.arbiter = options.arbiter;
+  }
+
+  if (options.role && options.address) {
+    if (options.role === "buyer") {
+      whereClauses.push(`buyer_address = @role_addr`);
+      params.role_addr = options.address;
+    } else if (options.role === "seller") {
+      whereClauses.push(`seller_address = @role_addr`);
+      params.role_addr = options.address;
+    } else if (options.role === "attestor") {
+      whereClauses.push(
+        `(attestor_address = @role_addr OR attestors LIKE '%' || @role_addr || '%')`,
+      );
+      params.role_addr = options.address;
+    } else if (options.role === "arbiter") {
+      whereClauses.push(`arbiter_address = @role_addr`);
+      params.role_addr = options.address;
+    }
+  } else if (options.address) {
+    whereClauses.push(
+      `(buyer_address = @addr OR seller_address = @addr OR attestor_address = @addr OR arbiter_address = @addr OR attestors LIKE '%' || @addr || '%')`,
+    );
+    params.addr = options.address;
+  }
+
+  if (options.cursor) {
+    const cursor = decodeOrderCursor(options.cursor);
+    whereClauses.push(
+      `(created_at < @cursor_created_at OR (created_at = @cursor_created_at AND id < @cursor_id))`,
+    );
+    params.cursor_created_at = cursor.createdAt;
+    params.cursor_id = cursor.id;
+  }
+
+  const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+  const sql = `SELECT * FROM orders ${whereSql} ORDER BY created_at DESC, id DESC LIMIT ${limit + 1}`;
+
+  const rows = db.prepare(sql).all(params) as OrderRow[];
+
+  let next_cursor: string | null = null;
+  let resultOrders = rows;
+
+  if (rows.length > limit) {
+    resultOrders = rows.slice(0, limit);
+    const lastItem = resultOrders[resultOrders.length - 1];
+    next_cursor = encodeOrderCursor(lastItem);
+  }
+
+  return {
+    orders: resultOrders,
+    next_cursor,
+  };
+}
+
 export function listOrders(): OrderRow[] {
-  return db.prepare(`SELECT * FROM orders ORDER BY created_at DESC`).all() as OrderRow[];
+  return db.prepare(`SELECT * FROM orders ORDER BY created_at DESC, id DESC`).all() as OrderRow[];
 }
 
 export function updateOrderStatus(

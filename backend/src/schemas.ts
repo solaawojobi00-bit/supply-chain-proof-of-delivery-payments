@@ -248,6 +248,90 @@ export const iotEventSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
+export const VALID_ORDER_STATUSES = [
+  "Created",
+  "Attested",
+  "Claimed",
+  "Reclaimed",
+  "Cancelled",
+  "Disputed",
+] as const;
+
+export const listOrdersQuerySchema = z
+  .object({
+    status: z
+      .union([z.string(), z.array(z.string())])
+      .optional()
+      .transform((val) => {
+        if (!val) return undefined;
+        const rawList = Array.isArray(val) ? val : val.split(",");
+        const normalized = rawList.map((s) => s.trim()).filter(Boolean);
+        return normalized;
+      })
+      .refine(
+        (list) => {
+          if (!list || list.length === 0) return true;
+          return list.every((item) =>
+            VALID_ORDER_STATUSES.some((s) => s.toLowerCase() === item.toLowerCase()),
+          );
+        },
+        {
+          message: `status must be one or more valid order statuses: ${VALID_ORDER_STATUSES.join(", ")}`,
+        },
+      ),
+    buyer: z
+      .string()
+      .refine(isValidStellarAddress, {
+        message: "buyer must be a valid Stellar public key (G...)",
+      })
+      .optional(),
+    seller: z
+      .string()
+      .refine(isValidStellarAddress, {
+        message: "seller must be a valid Stellar public key (G...)",
+      })
+      .optional(),
+    attestor: z
+      .string()
+      .refine(isValidStellarAddress, {
+        message: "attestor must be a valid Stellar public key (G...)",
+      })
+      .optional(),
+    arbiter: z
+      .string()
+      .refine(isValidStellarAddress, {
+        message: "arbiter must be a valid Stellar public key (G...)",
+      })
+      .optional(),
+    role: z
+      .enum(["buyer", "seller", "attestor", "arbiter"], {
+        message: "role must be one of: buyer, seller, attestor, arbiter",
+      })
+      .optional(),
+    address: z
+      .string()
+      .refine(isValidStellarAddress, {
+        message: "address must be a valid Stellar public key (G...)",
+      })
+      .optional(),
+    limit: z
+      .union([z.string(), z.number()])
+      .optional()
+      .transform((val) => {
+        if (val === undefined || val === null || val === "") return 50;
+        const num = typeof val === "number" ? val : Number(val);
+        if (isNaN(num)) return NaN;
+        return num;
+      })
+      .refine((val) => !isNaN(val) && Number.isInteger(val) && val >= 1, {
+        message: "limit must be a positive integer",
+      })
+      .transform((val) => Math.min(val, 200)),
+    cursor: z.string().optional(),
+  })
+  .strict();
+
+export type ListOrdersQuery = z.infer<typeof listOrdersQuerySchema>;
 export type CreateOrderBody = z.infer<typeof createOrderSchema>;
 export type AttestOrderBody = z.infer<typeof attestOrderSchema>;
 export type DisputeOrderBody = z.infer<typeof disputeOrderSchema>;

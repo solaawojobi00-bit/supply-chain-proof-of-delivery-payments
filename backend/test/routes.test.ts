@@ -1,3 +1,4 @@
+import { Keypair } from "@stellar/stellar-sdk";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { describe, expect, it, vi, beforeAll, afterAll } from "vitest";
 import { attestorKeypair, buyerKeypair, sellerKeypair } from "../src/keys.js";
@@ -194,9 +195,11 @@ describe("API Routes (routes.ts)", () => {
   it("GET /orders returns a list of orders", async () => {
     const res = await fetch(`${baseUrl}/orders`);
     expect(res.status).toBe(200);
-    const orders = (await res.json()) as any[];
-    expect(Array.isArray(orders)).toBe(true);
-    expect(orders.length).toBeGreaterThanOrEqual(1);
+    const body = (await res.json()) as any;
+    expect(body).toHaveProperty("orders");
+    expect(body).toHaveProperty("next_cursor");
+    expect(Array.isArray(body.orders)).toBe(true);
+    expect(body.orders.length).toBeGreaterThanOrEqual(1);
   });
 
   it("GET /orders/:id returns 404 for unknown order", async () => {
@@ -773,36 +776,41 @@ describe("API Routes (routes.ts)", () => {
         `${baseUrl}/orders?role=seller&address=${encodeURIComponent(sellerPk)}`,
       );
       expect(sellerOrdersRes.status).toBe(200);
-      const sellerOrders = (await sellerOrdersRes.json()) as any[];
-      expect(sellerOrders.some((o) => o.id === created.id)).toBe(true);
+      const sellerBody = (await sellerOrdersRes.json()) as any;
+      const sellerOrders = sellerBody.orders;
+      expect(sellerOrders.some((o: any) => o.id === created.id)).toBe(true);
 
       // Filter by role=attestor and address=attestorPk
       const attestorOrdersRes = await fetch(
         `${baseUrl}/orders?role=attestor&address=${encodeURIComponent(attestorPk)}`,
       );
       expect(attestorOrdersRes.status).toBe(200);
-      const attestorOrders = (await attestorOrdersRes.json()) as any[];
-      expect(attestorOrders.some((o) => o.id === created.id)).toBe(true);
+      const attestorBody = (await attestorOrdersRes.json()) as any;
+      const attestorOrders = attestorBody.orders;
+      expect(attestorOrders.some((o: any) => o.id === created.id)).toBe(true);
 
       // Filter by generic address
       const addrOrdersRes = await fetch(`${baseUrl}/orders?address=${encodeURIComponent(buyerPk)}`);
       expect(addrOrdersRes.status).toBe(200);
-      const addrOrders = (await addrOrdersRes.json()) as any[];
-      expect(addrOrders.some((o) => o.id === created.id)).toBe(true);
+      const addrBody = (await addrOrdersRes.json()) as any;
+      const addrOrders = addrBody.orders;
+      expect(addrOrders.some((o: any) => o.id === created.id)).toBe(true);
 
       // Filter by status=Created
       const statusOrdersRes = await fetch(`${baseUrl}/orders?status=Created`);
       expect(statusOrdersRes.status).toBe(200);
-      const statusOrders = (await statusOrdersRes.json()) as any[];
-      expect(statusOrders.every((o) => o.status === "Created")).toBe(true);
+      const statusBody = (await statusOrdersRes.json()) as any;
+      const statusOrders = statusBody.orders;
+      expect(statusOrders.every((o: any) => o.status === "Created")).toBe(true);
 
       // Non-matching address returns empty or non-matching list
       const nonMatchingRes = await fetch(
-        `${baseUrl}/orders?address=GD6W556Z365UFX3E4K54KPNK3R257K4O53EESK5Q3X7W25N5RN7OESQI`,
+        `${baseUrl}/orders?address=${Keypair.random().publicKey()}`,
       );
       expect(nonMatchingRes.status).toBe(200);
-      const nonMatching = (await nonMatchingRes.json()) as any[];
-      expect(nonMatching.some((o) => o.id === created.id)).toBe(false);
+      const nonMatchingBody = (await nonMatchingRes.json()) as any;
+      const nonMatching = nonMatchingBody.orders;
+      expect(nonMatching.some((o: any) => o.id === created.id)).toBe(false);
     });
   });
 });

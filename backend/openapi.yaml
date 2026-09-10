@@ -148,7 +148,7 @@ paths:
 
     get:
       summary: List all orders
-      description: Returns all orders tracked in the local database, with optional filtering by role, participant address, or status.
+      description: Returns all orders tracked in the local database, with optional filtering by role, participant address, or status, using keyset pagination.
       operationId: getAllOrders
       parameters:
         - name: role
@@ -169,7 +169,7 @@ paths:
           required: false
           schema:
             type: string
-          description: Filter by order status (e.g. Created, Attested, Claimed, Reclaimed, Cancelled, Disputed).
+          description: Filter by order status (e.g. Created, Attested, Claimed, Reclaimed, Cancelled, Disputed). Supports single status or comma-separated list.
         - name: buyer
           in: query
           required: false
@@ -188,15 +188,34 @@ paths:
           schema:
             type: string
           description: Filter by attestor Stellar public key.
+        - name: arbiter
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by arbiter Stellar public key.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 200
+          description: Maximum number of orders to return (default 50, maximum 200).
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Keyset pagination cursor for fetching the next page of orders.
       responses:
         "200":
-          description: List of all orders
+          description: Paginated list of orders with next_cursor
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Order"
+                $ref: "#/components/schemas/PaginatedOrdersResponse"
         "400":
           description: Invalid request query or parameters
           content:
@@ -679,6 +698,22 @@ paths:
 
 components:
   schemas:
+    PaginatedOrdersResponse:
+      type: object
+      required:
+        - orders
+        - next_cursor
+      properties:
+        orders:
+          type: array
+          items:
+            $ref: "#/components/schemas/Order"
+        next_cursor:
+          type: string
+          nullable: true
+          description: Keyset pagination cursor for retrieving the next page of orders, or null if no further pages exist.
+          example: "eyJjcmVhdGVkQXQiOiIyMDI2LTA5LTA4VDEyOjAwOjAwWiIsImlkIjoiMTAxIn0"
+
     CreateOrderRequest:
       type: object
       required:
