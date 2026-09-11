@@ -15,6 +15,18 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="./src/style.css" />
+    <script>
+      // Vite substitutes %VITE_API_BASE_URL% at build time. When the variable is
+      // unset the token is left verbatim, so treat that as "not configured" and
+      // let api.js fall back to its localhost default rather than requesting a
+      // literal "%VITE_API_BASE_URL%/orders".
+      (function () {
+        var configured = "%VITE_API_BASE_URL%";
+        if (configured && configured.indexOf("%") !== 0) {
+          window.__API_BASE_URL__ = configured.replace(/\/+$/, "");
+        }
+      })();
+    </script>
   </head>
   <body>
     <!-- Application Header -->

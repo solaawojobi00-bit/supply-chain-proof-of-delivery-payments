@@ -587,10 +587,10 @@ describe("API Routes (routes.ts)", () => {
       const order = (await createRes.json()) as any;
 
       // Set deadline in the past to allow reclaim
-      db.prepare("UPDATE orders SET deadline = ? WHERE id = ?").run(
-        Math.floor(Date.now() / 1000) - 100,
-        order.id,
-      );
+      await db.execute({
+        sql: "UPDATE orders SET deadline = ? WHERE id = ?",
+        args: [Math.floor(Date.now() / 1000) - 100, order.id],
+      });
 
       const res = await fetch(`${baseUrl}/orders/${order.id}/reclaim`, {
         method: "POST",

@@ -79,15 +79,15 @@ describe("Order Service Unit & Integration (orderService.ts)", () => {
     expect(order.attestor_address).toBe(attestorKeypair.publicKey());
     expect(order.create_tx_hash).toBe("mock-create-tx-hash");
 
-    const fetched = getOrderById(order.id);
+    const fetched = await getOrderById(order.id);
     expect(fetched.id).toBe(order.id);
 
-    const all = getAllOrders();
+    const all = await getAllOrders();
     expect(all.orders.some((o) => o.id === order.id)).toBe(true);
   });
 
-  it("throws 404 when querying nonexistent order", () => {
-    expect(() => getOrderById("nonexistent-order-id")).toThrowError(HttpError);
+  it("throws 404 when querying nonexistent order", async () => {
+    await expect(getOrderById("nonexistent-order-id")).rejects.toThrowError(HttpError);
   });
 
   it("fetches order along with on-chain state", async () => {
@@ -305,19 +305,19 @@ describe("Order Service Unit & Integration (orderService.ts)", () => {
 
       // 3. Unsigned reclaim (requires deadline to be passed)
       const { db } = await import("../src/db.js");
-      db.prepare("UPDATE orders SET deadline = ? WHERE id = ?").run(
-        Math.floor(Date.now() / 1000) - 100,
-        created.id,
-      );
+      await db.execute({
+        sql: "UPDATE orders SET deadline = ? WHERE id = ?",
+        args: [Math.floor(Date.now() / 1000) - 100, created.id],
+      });
       const unsignedReclaim = await buildUnsignedReclaim(created.id);
       expect(unsignedReclaim.unsignedTxXdr).toBe("mock-unsigned-reclaim-xdr");
       expect(unsignedReclaim.action).toBe("reclaim");
 
       // Restore deadline and attest order to test claim and dispute
-      db.prepare("UPDATE orders SET deadline = ? WHERE id = ?").run(
-        Math.floor(Date.now() / 1000) + 3600,
-        created.id,
-      );
+      await db.execute({
+        sql: "UPDATE orders SET deadline = ? WHERE id = ?",
+        args: [Math.floor(Date.now() / 1000) + 3600, created.id],
+      });
       await attestOrder(created.id);
 
       // 4. Unsigned claim

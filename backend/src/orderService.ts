@@ -64,7 +64,7 @@ export interface CreateOrderInput {
   webhookUrl?: string;
 }
 
-export function resolveAttestorList(input: CreateOrderInput): string[] {
+export async function resolveAttestorList(input: CreateOrderInput): Promise<string[]> {
   if (input.attestors && input.attestors.length > 0) {
     return input.attestors;
   }
@@ -72,7 +72,7 @@ export function resolveAttestorList(input: CreateOrderInput): string[] {
     return [input.attestorAddress];
   }
   if (input.attestorId) {
-    const registered = getAttestorById(input.attestorId);
+    const registered = await getAttestorById(input.attestorId);
     if (!registered) {
       throw new HttpError(400, `Attestor with id '${input.attestorId}' not found in directory`);
     }
@@ -81,8 +81,8 @@ export function resolveAttestorList(input: CreateOrderInput): string[] {
   throw new HttpError(400, "Either attestorAddress, attestors array, or attestorId is required");
 }
 
-function requireOrder(id: string): OrderRow {
-  const order = getOrder(id);
+async function requireOrder(id: string): Promise<OrderRow> {
+  const order = await getOrder(id);
   if (!order) {
     throw new HttpError(404, `Order ${id} not found`);
   }
@@ -115,7 +115,7 @@ export async function createOrder(
 ): Promise<OrderRow> {
   const numericId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
   const paymentToken = input.tokenContractId ?? config.paymentTokenContractId;
-  const attestors = resolveAttestorList(input);
+  const attestors = await resolveAttestorList(input);
   const threshold = input.threshold ?? 1;
   const primaryAttestor = attestors[0];
   const arbiterAddress = input.arbiterAddress ?? deployerKeypair.publicKey();
@@ -178,21 +178,21 @@ export async function createOrder(
     request_payload: requestPayload ?? null,
     created_at: new Date().toISOString(),
   };
-  insertOrder(row);
+  await insertOrder(row);
   await dispatchWebhook(row, "order.created", row.create_tx_hash);
   return row;
 }
 
-export function getOrderById(id: string): OrderRow {
+export async function getOrderById(id: string): Promise<OrderRow> {
   return requireOrder(id);
 }
 
-export function getAllOrders(options?: ListOrdersOptions): PaginatedOrdersResult {
+export async function getAllOrders(options?: ListOrdersOptions): Promise<PaginatedOrdersResult> {
   return queryOrders(options);
 }
 
 export async function getOrderWithChainState(id: string) {
-  const order = requireOrder(id);
+  const order = await requireOrder(id);
   const onChain =
     order.numeric_id != null && order.contract_id === config.escrowRegistryContractId
       ? await readOnChainRegistryOrder(order.contract_id, BigInt(order.numeric_id))
@@ -201,7 +201,7 @@ export async function getOrderWithChainState(id: string) {
 }
 
 export async function attestOrder(id: string, attestorAddress?: string): Promise<OrderRow> {
-  const order = requireOrder(id);
+  const order = await requireOrder(id);
   if (order.status !== "Created") {
     throw new HttpError(409, `Order is ${order.status}; can only attest an order that is Created`);
   }
@@ -264,15 +264,15 @@ export async function attestOrder(id: string, attestorAddress?: string): Promise
   const requiredThreshold = order.threshold ?? 1;
   const nextStatus = nextConfirmations.length >= requiredThreshold ? "Attested" : "Created";
 
-  updateOrderAttestation(id, nextStatus, nextConfirmations, txHash ?? "");
-  const updatedAttest = requireOrder(id);
+  await updateOrderAttestation(id, nextStatus, nextConfirmations, txHash ?? "");
+  const updatedAttest = await requireOrder(id);
   const event = updatedAttest.status === "Attested" ? "order.attested" : "order.confirmed";
   await dispatchWebhook(updatedAttest, event, txHash);
   return updatedAttest;
 }
 
 export async function claimOrder(id: string): Promise<OrderRow> {
-  const order = requireOrder(id);
+  const order = await requireOrder(id);
   if (order.status !== "Attested") {
     throw new HttpError(
       409,
@@ -290,14 +290,14 @@ export async function claimOrder(id: string): Promise<OrderRow> {
     order.numeric_id != null && order.contract_id === config.escrowRegistryContractId
       ? await callRegistryClaim(order.contract_id, signer, BigInt(order.numeric_id))
       : await callClaim(order.contract_id, signer);
-  updateOrderStatus(id, "Claimed", "claim_tx_hash", txHash ?? "");
-  const updatedClaim = requireOrder(id);
+  await updateOrderStatus(id, "Claimed", "claim_tx_hash", txHash ?? "");
+  const updatedClaim = await requireOrder(id);
   await dispatchWebhook(updatedClaim, "order.claimed", txHash);
   return updatedClaim;
 }
 
 export async function reclaimOrder(id: string): Promise<OrderRow> {
-  const order = requireOrder(id);
+  const order = await requireOrder(id);
   if (order.status !== "Created") {
     throw new HttpError(
       409,
@@ -311,14 +311,14 @@ export async function reclaimOrder(id: string): Promise<OrderRow> {
     order.numeric_id != null && order.contract_id === config.escrowRegistryContractId
       ? await callRegistryReclaim(order.contract_id, buyerKeypair, BigInt(order.numeric_id))
       : await callReclaim(order.contract_id, buyerKeypair);
-  updateOrderStatus(id, "Reclaimed", "reclaim_tx_hash", txHash ?? "");
-  const updatedReclaim = requireOrder(id);
+  await updateOrderStatus(id, "Reclaimed", "reclaim_tx_hash", txHash ?? "");
+  const updatedReclaim = await requireOrder(id);
   await dispatchWebhook(updatedReclaim, "order.reclaimed", txHash);
   return updatedReclaim;
 }
 
 export async function cancelOrder(id: string): Promise<OrderRow> {
-  const order = requireOrder(id);
+  const order = await requireOrder(id);
   if (order.status !== "Created") {
     throw new HttpError(409, `Order is ${order.status}; can only cancel an order that is Created`);
   }
@@ -345,14 +345,14 @@ export async function cancelOrder(id: string): Promise<OrderRow> {
           BigInt(order.numeric_id),
         )
       : await callCancel(order.contract_id, buyerSigner, sellerSigner);
-  updateOrderStatus(id, "Cancelled", "cancel_tx_hash", txHash ?? "");
-  const updatedCancel = requireOrder(id);
+  await updateOrderStatus(id, "Cancelled", "cancel_tx_hash", txHash ?? "");
+  const updatedCancel = await requireOrder(id);
   await dispatchWebhook(updatedCancel, "order.cancelled", txHash);
   return updatedCancel;
 }
 
 export async function disputeOrder(id: string, evidenceHash?: string | null): Promise<OrderRow> {
-  const order = requireOrder(id);
+  const order = await requireOrder(id);
   if (order.status !== "Attested") {
     throw new HttpError(
       409,
@@ -375,8 +375,8 @@ export async function disputeOrder(id: string, evidenceHash?: string | null): Pr
           evidenceHash,
         )
       : await callDispute(order.contract_id, buyerSigner, evidenceHash);
-  updateOrderDispute(id, "Disputed", txHash ?? "", evidenceHash);
-  const updatedDispute = requireOrder(id);
+  await updateOrderDispute(id, "Disputed", txHash ?? "", evidenceHash);
+  const updatedDispute = await requireOrder(id);
   await dispatchWebhook(updatedDispute, "order.disputed", txHash);
   return updatedDispute;
 }
@@ -388,7 +388,7 @@ export async function buildUnsignedCreateOrder(
 ): Promise<{ unsignedTxXdr: string; order: OrderRow }> {
   const numericId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
   const paymentToken = input.tokenContractId ?? config.paymentTokenContractId;
-  const attestors = resolveAttestorList(input);
+  const attestors = await resolveAttestorList(input);
   const threshold = input.threshold ?? 1;
   const primaryAttestor = attestors[0];
   const arbiterAddress = input.arbiterAddress ?? deployerKeypair.publicKey();
@@ -453,7 +453,7 @@ export async function buildUnsignedCreateOrder(
     request_payload: requestPayload ?? null,
     created_at: new Date().toISOString(),
   };
-  insertOrder(row);
+  await insertOrder(row);
   await dispatchWebhook(row, "order.created", null);
   return { unsignedTxXdr, order: row };
 }
@@ -462,7 +462,7 @@ export async function buildUnsignedAttest(
   id: string,
   attestorAddress?: string,
 ): Promise<{ unsignedTxXdr: string; orderId: string; contractId: string; action: string }> {
-  const order = requireOrder(id);
+  const order = await requireOrder(id);
   if (order.status !== "Created") {
     throw new HttpError(409, `Order is ${order.status}; can only attest an order that is Created`);
   }
@@ -510,7 +510,7 @@ export async function buildUnsignedAttest(
 export async function buildUnsignedClaim(
   id: string,
 ): Promise<{ unsignedTxXdr: string; orderId: string; contractId: string; action: string }> {
-  const order = requireOrder(id);
+  const order = await requireOrder(id);
   if (order.status !== "Attested") {
     throw new HttpError(
       409,
@@ -533,7 +533,7 @@ export async function buildUnsignedClaim(
 export async function buildUnsignedReclaim(
   id: string,
 ): Promise<{ unsignedTxXdr: string; orderId: string; contractId: string; action: string }> {
-  const order = requireOrder(id);
+  const order = await requireOrder(id);
   if (order.status !== "Created") {
     throw new HttpError(
       409,
@@ -560,7 +560,7 @@ export async function buildUnsignedCancel(
   id: string,
   callerAddress?: string,
 ): Promise<{ unsignedTxXdr: string; orderId: string; contractId: string; action: string }> {
-  const order = requireOrder(id);
+  const order = await requireOrder(id);
   if (order.status !== "Created") {
     throw new HttpError(409, `Order is ${order.status}; can only cancel an order that is Created`);
   }
@@ -579,7 +579,7 @@ export async function buildUnsignedDispute(
   buyerAddress?: string,
   evidenceHash?: string | null,
 ): Promise<{ unsignedTxXdr: string; orderId: string; contractId: string; action: string }> {
-  const order = requireOrder(id);
+  const order = await requireOrder(id);
   if (order.status !== "Attested") {
     throw new HttpError(
       409,
@@ -606,7 +606,7 @@ export async function buildUnsignedResolve(
   releaseToSeller: boolean,
   arbiterAddress?: string,
 ): Promise<{ unsignedTxXdr: string; orderId: string; contractId: string; action: string }> {
-  const order = requireOrder(id);
+  const order = await requireOrder(id);
   if (order.status !== "Disputed") {
     throw new HttpError(
       409,
@@ -629,7 +629,7 @@ export async function buildUnsignedResolve(
 }
 
 export async function resolveDispute(id: string, releaseToSeller: boolean): Promise<OrderRow> {
-  const order = requireOrder(id);
+  const order = await requireOrder(id);
   if (order.status !== "Disputed") {
     throw new HttpError(
       409,
@@ -654,8 +654,8 @@ export async function resolveDispute(id: string, releaseToSeller: boolean): Prom
         )
       : await callResolveDispute(order.contract_id, arbiterSigner, releaseToSeller);
   const nextStatus = releaseToSeller ? "Claimed" : "Reclaimed";
-  updateOrderStatus(id, nextStatus, "resolve_tx_hash", txHash ?? "");
-  const updatedResolve = requireOrder(id);
+  await updateOrderStatus(id, nextStatus, "resolve_tx_hash", txHash ?? "");
+  const updatedResolve = await requireOrder(id);
   await dispatchWebhook(updatedResolve, "order.resolved", txHash);
   return updatedResolve;
 }
@@ -669,7 +669,7 @@ export async function submitSignedTx(
   if (!orderId) {
     return { txHash: result.txHash, status: result.status };
   }
-  const order = getOrder(orderId);
+  const order = await getOrder(orderId);
   if (!order) {
     return { txHash: result.txHash, status: result.status };
   }
@@ -711,30 +711,30 @@ export async function submitSignedTx(
     else if (action === "dispute" || onChainStatus === "Disputed") txHashCol = "dispute_tx_hash";
     else if (action === "resolve") txHashCol = "resolve_tx_hash";
 
-    updateOrderAttestation(
+    await updateOrderAttestation(
       orderId,
       onChainStatus,
       confirmations,
       action === "attest" ? result.txHash : (order.attest_tx_hash ?? ""),
     );
-    updateOrderStatus(orderId, onChainStatus, txHashCol, result.txHash);
+    await updateOrderStatus(orderId, onChainStatus, txHashCol, result.txHash);
   } catch {
     if (action === "attest") {
-      updateOrderStatus(orderId, "Attested", "attest_tx_hash", result.txHash);
+      await updateOrderStatus(orderId, "Attested", "attest_tx_hash", result.txHash);
     } else if (action === "claim") {
-      updateOrderStatus(orderId, "Claimed", "claim_tx_hash", result.txHash);
+      await updateOrderStatus(orderId, "Claimed", "claim_tx_hash", result.txHash);
     } else if (action === "reclaim") {
-      updateOrderStatus(orderId, "Reclaimed", "reclaim_tx_hash", result.txHash);
+      await updateOrderStatus(orderId, "Reclaimed", "reclaim_tx_hash", result.txHash);
     } else if (action === "cancel") {
-      updateOrderStatus(orderId, "Cancelled", "cancel_tx_hash", result.txHash);
+      await updateOrderStatus(orderId, "Cancelled", "cancel_tx_hash", result.txHash);
     } else if (action === "dispute") {
-      updateOrderStatus(orderId, "Disputed", "dispute_tx_hash", result.txHash);
+      await updateOrderStatus(orderId, "Disputed", "dispute_tx_hash", result.txHash);
     } else if (action === "resolve") {
-      updateOrderStatus(orderId, "Claimed", "resolve_tx_hash", result.txHash);
+      await updateOrderStatus(orderId, "Claimed", "resolve_tx_hash", result.txHash);
     }
   }
 
-  const updatedOrder = requireOrder(orderId);
+  const updatedOrder = await requireOrder(orderId);
   const eventMap: Record<string, string> = {
     create: "order.created",
     attest: updatedOrder.status === "Attested" ? "order.attested" : "order.confirmed",

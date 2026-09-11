@@ -391,15 +391,76 @@ npm run format:check
 # Run TypeScript typechecking
 npm run typecheck
 
+# Compile TypeScript to dist/ (what the container runs)
+npm run build
+
 # Run unit and integration tests with coverage
 npm test
 ```
+
+`npm run dev` runs the server from source with hot reload. `npm start` runs the
+compiled output and therefore requires `npm run build` first; `npm run start:tsx`
+is the old behaviour of executing TypeScript directly, kept for convenience.
 
 ### Dependency Audit Gate & Maintenance
 
 - **Dependency Audit Gate**: Run `node scripts/audit-deps.mjs` to execute the unified audit gate across npm and cargo dependencies (failing CI on high/critical advisories while gracefully handling registry warnings).
 - **Audit Test Harness**: Run `node --test scripts/test-audit-deps.mjs` to run the regression test suite for the audit gate.
 - **Dependabot**: Dependabot configuration lives in [`.github/dependabot.yml`](.github/dependabot.yml), providing weekly automated updates for npm (`/backend`), cargo (`/`), and GitHub Actions.
+
+## Deployment
+
+The two halves deploy separately, because they have different requirements: the
+frontend is static, while the backend needs durable storage and an always-running
+process.
+
+| Piece | Host | Why |
+| --- | --- | --- |
+| `frontend/` | Vercel (static) | Vite build, no server needed |
+| `backend/` | Koyeb (container) | Long-running process; scale-to-zero on the free tier |
+| Order + attestor data | Turso (libSQL) | A container filesystem does not survive redeploys |
+
+### Persistence
+
+Data lives in libSQL, which is SQLite-compatible. Local development and tests use
+a local file or `:memory:` via `DB_PATH`; deployments set `TURSO_DATABASE_URL` and
+`TURSO_AUTH_TOKEN`, which take precedence. The schema is created by `initSchema()`
+at startup and is idempotent, so no separate migration step is required.
+
+### Backend (Koyeb)
+
+Build from [`backend/Dockerfile`](backend/Dockerfile) with `backend/` as the build
+context. Koyeb injects `PORT`. Required environment variables are the seven in
+[`backend/.env.example`](backend/.env.example) plus:
+
+- `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` — durable storage
+- `REQUIRE_TESTNET=true` — refuses to boot outside testnet, since this service
+  holds signing keys
+- `CORS_ALLOWED_ORIGINS` — the deployed frontend origin
+- `WEBHOOK_SIGNING_SECRET`, `IOT_WEBHOOK_SECRET` — both fall back to insecure
+  defaults when unset
+
+Use freshly generated testnet keypairs that are not used anywhere else. Health
+check path is `/health`.
+
+### Frontend (Vercel)
+
+Set the project root directory to `frontend/`; [`frontend/vercel.json`](frontend/vercel.json)
+supplies the rest. Set `VITE_API_BASE_URL` to the backend's public URL — it is
+substituted into `index.html` at **build** time, so changing it requires a redeploy.
+When unset, the app falls back to `http://localhost:3000`.
+
+Because the frontend and backend are separate origins, the frontend URL must
+appear in the backend's `CORS_ALLOWED_ORIGINS`. The allowlist is matched exactly,
+so Vercel preview deployments (which get generated URLs) are rejected unless their
+specific origins are added.
+
+### Known limitations
+
+- **Cold starts.** Koyeb's free instance scales to zero after an hour idle; the
+  first request afterwards pays a cold start on top of Soroban RPC latency.
+- **Rate limiting is per-instance.** `express-rate-limit` uses an in-memory store,
+  which is correct on a single instance but would not hold across replicas.
 
 ## Phase 2+ backlog
 
