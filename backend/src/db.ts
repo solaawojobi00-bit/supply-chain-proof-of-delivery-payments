@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { createClient, type Client, type InValue } from "@libsql/client";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { config } from "./config.js";
@@ -40,11 +40,32 @@ export interface OrderRow {
   created_at: string;
 }
 
-mkdirSync(dirname(config.dbPath), { recursive: true });
-export const db = new Database(config.dbPath);
-db.pragma("journal_mode = WAL");
+/**
+ * Accepts either a libSQL URL (libsql://, https://, file:, ws://) or a bare
+ * filesystem path, so existing DB_PATH values keep working unchanged.
+ */
+export function toLibsqlUrl(raw: string): string {
+  if (raw === ":memory:") return raw;
+  if (/^(libsql|https?|wss?|file):/.test(raw)) return raw;
+  return `file:${raw}`;
+}
 
-db.exec(`
+function createDbClient(): Client {
+  const url = toLibsqlUrl(config.databaseUrl);
+  // Local file databases need their parent directory to exist; remote and
+  // in-memory URLs have no directory to create.
+  if (url.startsWith("file:")) {
+    mkdirSync(dirname(url.slice("file:".length)), { recursive: true });
+  }
+  return createClient({
+    url,
+    ...(config.databaseAuthToken ? { authToken: config.databaseAuthToken } : {}),
+  });
+}
+
+export const db: Client = createDbClient();
+
+const ORDERS_TABLE = `
   CREATE TABLE IF NOT EXISTS orders (
     id TEXT PRIMARY KEY,
     contract_id TEXT NOT NULL,
@@ -77,111 +98,101 @@ db.exec(`
     request_payload TEXT,
     created_at TEXT NOT NULL
   )
-`);
+`;
 
-try {
-  db.exec(`ALTER TABLE orders ADD COLUMN idempotency_key TEXT UNIQUE`);
-} catch {
-  // column already exists
+/**
+ * Additive column migrations for databases created before each column existed.
+ * Every one of these is also present in ORDERS_TABLE, so on a fresh database
+ * they all fail with "duplicate column name" and are skipped.
+ */
+const ORDERS_ADDED_COLUMNS = [
+  `idempotency_key TEXT UNIQUE`,
+  `request_payload TEXT`,
+  `numeric_id INTEGER`,
+  `cancel_tx_hash TEXT`,
+  `attestors TEXT`,
+  `threshold INTEGER DEFAULT 1`,
+  `confirmations TEXT DEFAULT '[]'`,
+  `arbiter_address TEXT`,
+  `dispute_tx_hash TEXT`,
+  `resolve_tx_hash TEXT`,
+  `buyer_token TEXT`,
+  `seller_token TEXT`,
+  `attestor_token TEXT`,
+  `arbiter_token TEXT`,
+  `webhook_url TEXT`,
+  `evidence_hash TEXT`,
+];
+
+const ORDERS_INDEXES = [
+  `CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)`,
+  `CREATE INDEX IF NOT EXISTS idx_orders_buyer ON orders(buyer_address)`,
+  `CREATE INDEX IF NOT EXISTS idx_orders_seller ON orders(seller_address)`,
+  `CREATE INDEX IF NOT EXISTS idx_orders_attestor ON orders(attestor_address)`,
+  `CREATE INDEX IF NOT EXISTS idx_orders_created_at_id ON orders(created_at DESC, id DESC)`,
+];
+
+const ATTESTOR_DIRECTORY_TABLE = `
+  CREATE TABLE IF NOT EXISTS attestor_directory (
+    id TEXT PRIMARY KEY,
+    address TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    description TEXT,
+    coverage_area TEXT,
+    fee_bps INTEGER DEFAULT 0,
+    active INTEGER DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+`;
+
+const ATTESTOR_DIRECTORY_INDEXES = [
+  `CREATE INDEX IF NOT EXISTS idx_attestor_directory_address ON attestor_directory (address)`,
+];
+
+let schemaReady: Promise<void> | undefined;
+
+async function runSchema(): Promise<void> {
+  await db.execute(ORDERS_TABLE);
+  for (const column of ORDERS_ADDED_COLUMNS) {
+    try {
+      await db.execute(`ALTER TABLE orders ADD COLUMN ${column}`);
+    } catch {
+      // column already exists
+    }
+  }
+  for (const statement of ORDERS_INDEXES) {
+    await db.execute(statement);
+  }
+
+  await db.execute(ATTESTOR_DIRECTORY_TABLE);
+  for (const statement of ATTESTOR_DIRECTORY_INDEXES) {
+    await db.execute(statement);
+  }
 }
 
-try {
-  db.exec(`ALTER TABLE orders ADD COLUMN request_payload TEXT`);
-} catch {
-  // column already exists
+/**
+ * Creates tables and indexes. Idempotent, and safe to call concurrently — the
+ * first caller's promise is reused so the DDL runs exactly once per process.
+ */
+export function initSchema(): Promise<void> {
+  if (!schemaReady) {
+    schemaReady = runSchema();
+  }
+  return schemaReady;
 }
 
-try {
-  db.exec(`ALTER TABLE orders ADD COLUMN numeric_id INTEGER`);
-} catch {
-  // column already exists
+type NamedArgs = Record<string, InValue>;
+
+async function selectRows<T>(sql: string, args?: NamedArgs | InValue[]): Promise<T[]> {
+  const result = await db.execute(args === undefined ? sql : { sql, args });
+  return result.rows as unknown as T[];
 }
 
-try {
-  db.exec(`ALTER TABLE orders ADD COLUMN cancel_tx_hash TEXT`);
-} catch {
-  // column already exists
+async function selectOne<T>(sql: string, args: NamedArgs | InValue[]): Promise<T | undefined> {
+  const rows = await selectRows<T>(sql, args);
+  return rows[0];
 }
-
-try {
-  db.exec(`ALTER TABLE orders ADD COLUMN attestors TEXT`);
-} catch {
-  // column already exists
-}
-
-try {
-  db.exec(`ALTER TABLE orders ADD COLUMN threshold INTEGER DEFAULT 1`);
-} catch {
-  // column already exists
-}
-
-try {
-  db.exec(`ALTER TABLE orders ADD COLUMN confirmations TEXT DEFAULT '[]'`);
-} catch {
-  // column already exists
-}
-
-try {
-  db.exec(`ALTER TABLE orders ADD COLUMN arbiter_address TEXT`);
-} catch {
-  // column already exists
-}
-
-try {
-  db.exec(`ALTER TABLE orders ADD COLUMN dispute_tx_hash TEXT`);
-} catch {
-  // column already exists
-}
-
-try {
-  db.exec(`ALTER TABLE orders ADD COLUMN resolve_tx_hash TEXT`);
-} catch {
-  // column already exists
-}
-
-try {
-  db.exec(`ALTER TABLE orders ADD COLUMN buyer_token TEXT`);
-} catch {
-  // column already exists
-}
-
-try {
-  db.exec(`ALTER TABLE orders ADD COLUMN seller_token TEXT`);
-} catch {
-  // column already exists
-}
-
-try {
-  db.exec(`ALTER TABLE orders ADD COLUMN attestor_token TEXT`);
-} catch {
-  // column already exists
-}
-
-try {
-  db.exec(`ALTER TABLE orders ADD COLUMN arbiter_token TEXT`);
-} catch {
-  // column already exists
-}
-
-try {
-  db.exec(`ALTER TABLE orders ADD COLUMN webhook_url TEXT`);
-} catch {
-  // column already exists
-}
-
-try {
-  db.exec(`ALTER TABLE orders ADD COLUMN evidence_hash TEXT`);
-} catch {
-  // column already exists
-}
-
-db.exec(`
-  CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
-  CREATE INDEX IF NOT EXISTS idx_orders_buyer ON orders(buyer_address);
-  CREATE INDEX IF NOT EXISTS idx_orders_seller ON orders(seller_address);
-  CREATE INDEX IF NOT EXISTS idx_orders_attestor ON orders(attestor_address);
-  CREATE INDEX IF NOT EXISTS idx_orders_created_at_id ON orders(created_at DESC, id DESC);
-`);
 
 export interface OrderCursor {
   createdAt: string;
@@ -211,9 +222,9 @@ export function decodeOrderCursor(cursorStr: string): OrderCursor {
   throw new HttpError(400, "Invalid pagination cursor format");
 }
 
-export function insertOrder(row: OrderRow): void {
-  db.prepare(
-    `INSERT INTO orders (
+export async function insertOrder(row: OrderRow): Promise<void> {
+  await db.execute({
+    sql: `INSERT INTO orders (
       id, contract_id, numeric_id, buyer_address, seller_address, attestor_address,
       attestors, threshold, confirmations, arbiter_address,
       token_contract_id, amount, deadline, status, evidence_hash,
@@ -232,34 +243,47 @@ export function insertOrder(row: OrderRow): void {
       @webhook_url,
       @idempotency_key, @request_payload, @created_at
     )`,
-  ).run({
-    ...row,
-    numeric_id: row.numeric_id ?? null,
-    attestors: row.attestors ?? null,
-    threshold: row.threshold ?? 1,
-    confirmations: row.confirmations ?? "[]",
-    arbiter_address: row.arbiter_address ?? null,
-    evidence_hash: row.evidence_hash ?? null,
-    cancel_tx_hash: row.cancel_tx_hash ?? null,
-    dispute_tx_hash: row.dispute_tx_hash ?? null,
-    resolve_tx_hash: row.resolve_tx_hash ?? null,
-    buyer_token: row.buyer_token ?? null,
-    seller_token: row.seller_token ?? null,
-    attestor_token: row.attestor_token ?? null,
-    arbiter_token: row.arbiter_token ?? null,
-    webhook_url: row.webhook_url ?? null,
-    idempotency_key: row.idempotency_key ?? null,
-    request_payload: row.request_payload ?? null,
+    args: {
+      id: row.id,
+      contract_id: row.contract_id,
+      numeric_id: row.numeric_id ?? null,
+      buyer_address: row.buyer_address,
+      seller_address: row.seller_address,
+      attestor_address: row.attestor_address,
+      attestors: row.attestors ?? null,
+      threshold: row.threshold ?? 1,
+      confirmations: row.confirmations ?? "[]",
+      arbiter_address: row.arbiter_address ?? null,
+      token_contract_id: row.token_contract_id,
+      amount: row.amount,
+      deadline: row.deadline,
+      status: row.status,
+      evidence_hash: row.evidence_hash ?? null,
+      create_tx_hash: row.create_tx_hash ?? null,
+      attest_tx_hash: row.attest_tx_hash ?? null,
+      claim_tx_hash: row.claim_tx_hash ?? null,
+      reclaim_tx_hash: row.reclaim_tx_hash ?? null,
+      cancel_tx_hash: row.cancel_tx_hash ?? null,
+      dispute_tx_hash: row.dispute_tx_hash ?? null,
+      resolve_tx_hash: row.resolve_tx_hash ?? null,
+      buyer_token: row.buyer_token ?? null,
+      seller_token: row.seller_token ?? null,
+      attestor_token: row.attestor_token ?? null,
+      arbiter_token: row.arbiter_token ?? null,
+      webhook_url: row.webhook_url ?? null,
+      idempotency_key: row.idempotency_key ?? null,
+      request_payload: row.request_payload ?? null,
+      created_at: row.created_at,
+    },
   });
 }
 
-export function getOrder(id: string): OrderRow | undefined {
-  return db.prepare(`SELECT * FROM orders WHERE id = ?`).get(id) as OrderRow | undefined;
+export async function getOrder(id: string): Promise<OrderRow | undefined> {
+  return selectOne<OrderRow>(`SELECT * FROM orders WHERE id = ?`, [id]);
 }
 
-export function getOrderByIdempotencyKey(key: string): OrderRow | undefined {
-  return db.prepare(`SELECT * FROM orders WHERE idempotency_key = ?`).get(key) as
-    OrderRow | undefined;
+export async function getOrderByIdempotencyKey(key: string): Promise<OrderRow | undefined> {
+  return selectOne<OrderRow>(`SELECT * FROM orders WHERE idempotency_key = ?`, [key]);
 }
 
 export interface ListOrdersOptions {
@@ -279,10 +303,10 @@ export interface PaginatedOrdersResult {
   next_cursor: string | null;
 }
 
-export function queryOrders(options: ListOrdersOptions = {}): PaginatedOrdersResult {
+export async function queryOrders(options: ListOrdersOptions = {}): Promise<PaginatedOrdersResult> {
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
   const whereClauses: string[] = [];
-  const params: Record<string, unknown> = {};
+  const params: NamedArgs = {};
 
   if (options.status && options.status.length > 0) {
     const statusPlaceholders = options.status.map((_, i) => `@status_${i}`);
@@ -345,9 +369,11 @@ export function queryOrders(options: ListOrdersOptions = {}): PaginatedOrdersRes
   }
 
   const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
-  const sql = `SELECT * FROM orders ${whereSql} ORDER BY created_at DESC, id DESC LIMIT ${limit + 1}`;
+  // Fetch one extra row to detect whether a further page exists.
+  params.limit = limit + 1;
+  const sql = `SELECT * FROM orders ${whereSql} ORDER BY created_at DESC, id DESC LIMIT @limit`;
 
-  const rows = db.prepare(sql).all(params) as OrderRow[];
+  const rows = await selectRows<OrderRow>(sql, params);
 
   let next_cursor: string | null = null;
   let resultOrders = rows;
@@ -364,11 +390,11 @@ export function queryOrders(options: ListOrdersOptions = {}): PaginatedOrdersRes
   };
 }
 
-export function listOrders(): OrderRow[] {
-  return db.prepare(`SELECT * FROM orders ORDER BY created_at DESC, id DESC`).all() as OrderRow[];
+export async function listOrders(): Promise<OrderRow[]> {
+  return selectRows<OrderRow>(`SELECT * FROM orders ORDER BY created_at DESC, id DESC`);
 }
 
-export function updateOrderStatus(
+export async function updateOrderStatus(
   id: string,
   status: OrderStatus,
   txHashColumn:
@@ -379,32 +405,37 @@ export function updateOrderStatus(
     | "dispute_tx_hash"
     | "resolve_tx_hash",
   txHash: string,
-): void {
-  db.prepare(`UPDATE orders SET status = ?, ${txHashColumn} = ? WHERE id = ?`).run(
-    status,
-    txHash,
-    id,
-  );
+): Promise<void> {
+  await db.execute({
+    sql: `UPDATE orders SET status = ?, ${txHashColumn} = ? WHERE id = ?`,
+    args: [status, txHash, id],
+  });
 }
 
-export function updateOrderDispute(
+export async function updateOrderDispute(
   id: string,
   status: OrderStatus,
   disputeTxHash: string,
   evidenceHash?: string | null,
-): void {
-  db.prepare(
-    `UPDATE orders SET status = ?, dispute_tx_hash = ?, evidence_hash = ? WHERE id = ?`,
-  ).run(status, disputeTxHash, evidenceHash ?? null, id);
+): Promise<void> {
+  await db.execute({
+    sql: `UPDATE orders SET status = ?, dispute_tx_hash = ?, evidence_hash = ? WHERE id = ?`,
+    args: [status, disputeTxHash, evidenceHash ?? null, id],
+  });
 }
 
-export function updateOrderAttestation(
+/**
+ * Records an attestation and its resulting status in a single statement, so a
+ * concurrent write cannot land between the confirmations and status updates.
+ */
+export async function updateOrderAttestation(
   id: string,
   status: OrderStatus,
   confirmations: string[],
   attestTxHash: string,
-): void {
-  db.prepare(
-    `UPDATE orders SET status = ?, confirmations = ?, attest_tx_hash = ? WHERE id = ?`,
-  ).run(status, JSON.stringify(confirmations), attestTxHash, id);
+): Promise<void> {
+  await db.execute({
+    sql: `UPDATE orders SET status = ?, confirmations = ?, attest_tx_hash = ? WHERE id = ?`,
+    args: [status, JSON.stringify(confirmations), attestTxHash, id],
+  });
 }

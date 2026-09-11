@@ -33,30 +33,31 @@ describe("Attestor Reputation Sort & Filter (Issue #78)", () => {
   const THIN_SAMPLE = Keypair.random().publicKey();
 
   /** Inserts an order attributed to `attestor` with the given terminal status. */
-  function seedOrder(attestor: string, status: string, opts: { disputed?: boolean } = {}) {
+  async function seedOrder(attestor: string, status: string, opts: { disputed?: boolean } = {}) {
     const id = `${attestor.slice(0, 6)}-${status}-${Math.random().toString(36).slice(2, 10)}`;
-    db.prepare(
-      `INSERT INTO orders (
+    await db.execute({
+      sql: `INSERT INTO orders (
         id, contract_id, buyer_address, seller_address, attestor_address,
         attestors, threshold, confirmations, token_contract_id, amount,
         deadline, status, dispute_tx_hash, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      id,
-      "C" + "0".repeat(55),
-      FLAWLESS,
-      MIXED,
-      attestor,
-      JSON.stringify([attestor]),
-      1,
-      JSON.stringify([attestor]),
-      "C" + "1".repeat(55),
-      "10000000",
-      Math.floor(Date.now() / 1000) + 3600,
-      status,
-      opts.disputed ? "mock-dispute-hash" : null,
-      new Date().toISOString(),
-    );
+      args: [
+        id,
+        "C" + "0".repeat(55),
+        FLAWLESS,
+        MIXED,
+        attestor,
+        JSON.stringify([attestor]),
+        1,
+        JSON.stringify([attestor]),
+        "C" + "1".repeat(55),
+        "10000000",
+        Math.floor(Date.now() / 1000) + 3600,
+        status,
+        opts.disputed ? "mock-dispute-hash" : null,
+        new Date().toISOString(),
+      ],
+    });
   }
 
   beforeAll(async () => {
@@ -86,29 +87,29 @@ describe("Attestor Reputation Sort & Filter (Issue #78)", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  beforeEach(() => {
-    db.exec(`DELETE FROM attestor_directory`);
-    db.exec(`DELETE FROM orders`);
+  beforeEach(async () => {
+    await db.execute(`DELETE FROM attestor_directory`);
+    await db.execute(`DELETE FROM orders`);
 
-    registerAttestor({
+    await registerAttestor({
       address: FLAWLESS,
       name: "Flawless Freight",
       coverageArea: "North America",
       feeBps: 300,
     });
-    registerAttestor({
+    await registerAttestor({
       address: MIXED,
       name: "Mixed Record Logistics",
       coverageArea: "Europe",
       feeBps: 100,
     });
-    registerAttestor({
+    await registerAttestor({
       address: DISPUTED,
       name: "Disputed Deliveries",
       coverageArea: "Asia Pacific",
       feeBps: 50,
     });
-    registerAttestor({
+    await registerAttestor({
       address: THIN_SAMPLE,
       name: "Brand New Attestor",
       coverageArea: "North America",
@@ -116,22 +117,22 @@ describe("Attestor Reputation Sort & Filter (Issue #78)", () => {
     });
 
     // FLAWLESS: 4/4 claimed -> successRate 1.0, disputeRate 0
-    for (let i = 0; i < 4; i++) seedOrder(FLAWLESS, "Claimed");
+    for (let i = 0; i < 4; i++) await seedOrder(FLAWLESS, "Claimed");
 
     // MIXED: 2/4 claimed -> successRate 0.5, disputeRate 0
-    seedOrder(MIXED, "Claimed");
-    seedOrder(MIXED, "Claimed");
-    seedOrder(MIXED, "Reclaimed");
-    seedOrder(MIXED, "Reclaimed");
+    await seedOrder(MIXED, "Claimed");
+    await seedOrder(MIXED, "Claimed");
+    await seedOrder(MIXED, "Reclaimed");
+    await seedOrder(MIXED, "Reclaimed");
 
     // DISPUTED: 1/4 claimed, 2 disputed -> successRate 0.25, disputeRate 0.5
-    seedOrder(DISPUTED, "Claimed");
-    seedOrder(DISPUTED, "Reclaimed");
-    seedOrder(DISPUTED, "Disputed", { disputed: true });
-    seedOrder(DISPUTED, "Disputed", { disputed: true });
+    await seedOrder(DISPUTED, "Claimed");
+    await seedOrder(DISPUTED, "Reclaimed");
+    await seedOrder(DISPUTED, "Disputed", { disputed: true });
+    await seedOrder(DISPUTED, "Disputed", { disputed: true });
 
     // THIN_SAMPLE: exactly one claimed order -> successRate 1.0 on n=1
-    seedOrder(THIN_SAMPLE, "Claimed");
+    await seedOrder(THIN_SAMPLE, "Claimed");
   });
 
   async function get(query: string): Promise<{ status: number; body: AttestorResponse[] }> {
@@ -204,7 +205,10 @@ describe("Attestor Reputation Sort & Filter (Issue #78)", () => {
     });
 
     it("preserves activeOnly default behaviour", async () => {
-      db.prepare(`UPDATE attestor_directory SET active = 0 WHERE address = ?`).run(MIXED);
+      await db.execute({
+        sql: `UPDATE attestor_directory SET active = 0 WHERE address = ?`,
+        args: [MIXED],
+      });
 
       const { body: defaulted } = await get("");
       expect(defaulted.map((a) => a.address)).not.toContain(MIXED);
@@ -270,16 +274,17 @@ describe("Attestor Reputation Sort & Filter (Issue #78)", () => {
   });
 
   describe("listAttestors() unit behaviour", () => {
-    it("applies the documented default direction per sort key", () => {
-      expect(listAttestors({ sort: "feeBps" }).map((a) => a.feeBps)).toEqual([25, 50, 100, 300]);
-      const scores = listAttestors({ sort: "reputationScore" }).map(
+    it("applies the documented default direction per sort key", async () => {
+      const fees = (await listAttestors({ sort: "feeBps" })).map((a) => a.feeBps);
+      expect(fees).toEqual([25, 50, 100, 300]);
+      const scores = (await listAttestors({ sort: "reputationScore" })).map(
         (a) => a.reputation.reputationScore,
       );
       expect(scores).toEqual([...scores].sort((x, y) => y - x));
     });
 
-    it("returns every registered attestor when no filters are supplied", () => {
-      expect(listAttestors()).toHaveLength(4);
+    it("returns every registered attestor when no filters are supplied", async () => {
+      expect(await listAttestors()).toHaveLength(4);
     });
   });
 });

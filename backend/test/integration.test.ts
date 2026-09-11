@@ -237,10 +237,10 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       };
 
       // Manually set deadline to past in database
-      db.prepare("UPDATE orders SET deadline = ? WHERE id = ?").run(
-        Math.floor(Date.now() / 1000) - 60,
-        created.id,
-      );
+      await db.execute({
+        sql: "UPDATE orders SET deadline = ? WHERE id = ?",
+        args: [Math.floor(Date.now() / 1000) - 60, created.id],
+      });
 
       // Verify lifecycle reports deadline-passed
       const getRes = await fetch(`${baseUrl}/orders/${created.id}`);
@@ -413,10 +413,10 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       const order = (await createRes.json()) as { id: string; tokens: { attestor: string } };
 
       // Expire order in DB
-      db.prepare("UPDATE orders SET deadline = ? WHERE id = ?").run(
-        Math.floor(Date.now() / 1000) - 100,
-        order.id,
-      );
+      await db.execute({
+        sql: "UPDATE orders SET deadline = ? WHERE id = ?",
+        args: [Math.floor(Date.now() / 1000) - 100, order.id],
+      });
 
       const attestRes = await fetch(`${baseUrl}/orders/${order.id}/attest`, {
         method: "POST",
@@ -494,10 +494,10 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       };
 
       // Expire and reclaim
-      db.prepare("UPDATE orders SET deadline = ? WHERE id = ?").run(
-        Math.floor(Date.now() / 1000) - 10,
-        order.id,
-      );
+      await db.execute({
+        sql: "UPDATE orders SET deadline = ? WHERE id = ?",
+        args: [Math.floor(Date.now() / 1000) - 10, order.id],
+      });
       await fetch(`${baseUrl}/orders/${order.id}/reclaim`, {
         method: "POST",
         headers: { Authorization: `Bearer ${order.tokens.buyer}` },
@@ -651,10 +651,10 @@ describe("Backend Integration Test Suite (Full Order Lifecycles & Negative Matri
       const order = (await createRes.json()) as { id: string; tokens: { buyer: string } };
 
       // Expire and reclaim
-      db.prepare("UPDATE orders SET deadline = ? WHERE id = ?").run(
-        Math.floor(Date.now() / 1000) - 10,
-        order.id,
-      );
+      await db.execute({
+        sql: "UPDATE orders SET deadline = ? WHERE id = ?",
+        args: [Math.floor(Date.now() / 1000) - 10, order.id],
+      });
       await fetch(`${baseUrl}/orders/${order.id}/reclaim`, {
         method: "POST",
         headers: { Authorization: `Bearer ${order.tokens.buyer}` },

@@ -2,6 +2,7 @@ import cors, { type CorsOptions } from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
 import helmet from "helmet";
 import { config } from "./config.js";
+import { initSchema } from "./db.js";
 import { HttpError } from "./httpError.js";
 import { logStructured, requestLogger } from "./logger.js";
 import { router } from "./routes.js";
@@ -75,7 +76,24 @@ app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
 });
 
-if (process.env.NODE_ENV !== "test") {
+/**
+ * A public deployment holds server-side signing keys, so REQUIRE_TESTNET pins it
+ * to testnet where the blast radius of a leaked key is worthless funds. Enforced
+ * here rather than in resolveConfig, which must still resolve mainnet and local
+ * configurations for local operators and tests.
+ */
+export function assertNetworkAllowed(): void {
+  if (config.requireTestnet && config.network !== "testnet") {
+    throw new Error(
+      `REQUIRE_TESTNET is set but STELLAR_NETWORK is "${config.network}". This deployment holds signing keys and refuses to start outside testnet.`,
+    );
+  }
+}
+
+export async function startServer(): Promise<void> {
+  assertNetworkAllowed();
+  // Schema must exist before the first request is served.
+  await initSchema();
   app.listen(config.port, () => {
     logStructured({
       type: "server_start",
@@ -83,5 +101,16 @@ if (process.env.NODE_ENV !== "test") {
       network: config.network,
       message: `Escrow backend listening on http://localhost:${config.port} (network: ${config.network})`,
     });
+  });
+}
+
+if (process.env.NODE_ENV !== "test") {
+  startServer().catch((err: unknown) => {
+    logStructured({
+      level: "error",
+      type: "server_start_failed",
+      error: err instanceof Error ? err.message : String(err),
+    });
+    process.exit(1);
   });
 }

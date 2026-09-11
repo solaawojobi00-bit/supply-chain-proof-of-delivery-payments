@@ -96,7 +96,14 @@ export function resolveConfig(env: NodeJS.ProcessEnv = process.env) {
     rateLimitMaxGeneral: Number(env.RATE_LIMIT_MAX_GENERAL ?? 300),
     trustProxy: parseTrustProxy(env.TRUST_PROXY),
     port: Number(env.PORT ?? 3000),
-    dbPath: env.DB_PATH ?? "./data/orders.sqlite",
+    // Accepts a libSQL URL (libsql://…, file:…) or a bare path. TURSO_DATABASE_URL
+    // wins so a deployment can point at Turso without disturbing local DB_PATH use.
+    databaseUrl: env.TURSO_DATABASE_URL ?? env.DB_PATH ?? "./data/orders.sqlite",
+    databaseAuthToken: env.TURSO_AUTH_TOKEN ?? "",
+    // Deployment guard: the server holds signing keys, so a public instance is
+    // pinned to testnet. Enforced at boot in index.ts, not here, because
+    // resolveConfig must still resolve mainnet/local configs for callers and tests.
+    requireTestnet: env.REQUIRE_TESTNET === "true" || env.REQUIRE_TESTNET === "1",
   };
 }
 

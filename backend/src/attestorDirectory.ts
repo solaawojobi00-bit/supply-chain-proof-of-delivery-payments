@@ -54,42 +54,33 @@ export interface UpdateAttestorInput {
   active?: boolean;
 }
 
-// Ensure database table exists
-db.exec(`
-  CREATE TABLE IF NOT EXISTS attestor_directory (
-    id TEXT PRIMARY KEY,
-    address TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    description TEXT,
-    coverage_area TEXT,
-    fee_bps INTEGER DEFAULT 0,
-    active INTEGER DEFAULT 1,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_attestor_directory_address ON attestor_directory (address);
-`);
+/** The order fields reputation is derived from. */
+interface ReputationSourceRow {
+  attestor_address: string;
+  status: string;
+  attestors: string | null;
+  confirmations: string | null;
+  dispute_tx_hash: string | null;
+  resolve_tx_hash: string | null;
+}
+
+const REPUTATION_SOURCE_COLUMNS = `attestor_address, status, attestors, confirmations, dispute_tx_hash, resolve_tx_hash`;
 
 /**
- * Derives dynamic reputation statistics from real order history in the `orders` table.
- * Reputation is calculated purely from actual contract execution events, never self-reported.
+ * True when the address is this order's primary attestor or appears in its
+ * multi-attestor array. Mirrors the SQL predicate used by the single-address
+ * query so both paths select the same orders.
  */
-export function computeReputationForAddress(address: string): AttestorReputationSummary {
-  // Query all orders where this address was the primary attestor or part of multi-attestor array
-  const rows = db
-    .prepare(
-      `SELECT status, attestors, confirmations, dispute_tx_hash, resolve_tx_hash 
-       FROM orders 
-       WHERE attestor_address = ? OR attestors LIKE ?`,
-    )
-    .all(address, `%"${address}"%`) as Array<{
-    status: string;
-    attestors: string | null;
-    confirmations: string | null;
-    dispute_tx_hash: string | null;
-    resolve_tx_hash: string | null;
-  }>;
+function orderInvolvesAttestor(row: ReputationSourceRow, address: string): boolean {
+  if (row.attestor_address === address) return true;
+  return typeof row.attestors === "string" && row.attestors.includes(`"${address}"`);
+}
 
+/**
+ * Reduces an attestor's order history into reputation statistics. Pure, so the
+ * single-address and batch paths share identical scoring.
+ */
+function reduceReputation(rows: ReputationSourceRow[], address: string): AttestorReputationSummary {
   const totalAssigned = rows.length;
   let totalAttested = 0;
   let successfulClaims = 0;
@@ -165,11 +156,46 @@ export function computeReputationForAddress(address: string): AttestorReputation
   };
 }
 
+/**
+ * Derives dynamic reputation statistics from real order history in the `orders` table.
+ * Reputation is calculated purely from actual contract execution events, never self-reported.
+ */
+export async function computeReputationForAddress(
+  address: string,
+): Promise<AttestorReputationSummary> {
+  const result = await db.execute({
+    sql: `SELECT ${REPUTATION_SOURCE_COLUMNS}
+       FROM orders
+       WHERE attestor_address = ? OR attestors LIKE ?`,
+    args: [address, `%"${address}"%`],
+  });
+  return reduceReputation(result.rows as unknown as ReputationSourceRow[], address);
+}
+
+/**
+ * Reputation for many addresses using a single query. Listing endpoints need a
+ * score for every row, so fetching per address would issue one round-trip each.
+ */
+async function computeReputationForAddresses(
+  addresses: string[],
+): Promise<Map<string, AttestorReputationSummary>> {
+  const summaries = new Map<string, AttestorReputationSummary>();
+  if (addresses.length === 0) return summaries;
+
+  const result = await db.execute(`SELECT ${REPUTATION_SOURCE_COLUMNS} FROM orders`);
+  const allRows = result.rows as unknown as ReputationSourceRow[];
+
+  for (const address of addresses) {
+    const relevant = allRows.filter((row) => orderInvolvesAttestor(row, address));
+    summaries.set(address, reduceReputation(relevant, address));
+  }
+  return summaries;
+}
+
 export function formatAttestor(
   row: AttestorRow,
-  reputationOverride?: AttestorReputationSummary,
+  reputation: AttestorReputationSummary,
 ): AttestorWithReputation {
-  const reputation = reputationOverride || computeReputationForAddress(row.address);
   return {
     id: row.id,
     address: row.address,
@@ -184,73 +210,77 @@ export function formatAttestor(
   };
 }
 
+async function withReputation(row: AttestorRow): Promise<AttestorWithReputation> {
+  return formatAttestor(row, await computeReputationForAddress(row.address));
+}
+
 /**
  * Registers a new attestor or updates an existing registration if the address is already registered.
+ *
+ * Written as a single upsert: a check-then-write pair would let two concurrent
+ * registrations for the same address both miss the check, and one would then
+ * fail the `address` UNIQUE constraint.
  */
-export function registerAttestor(input: RegisterAttestorInput): AttestorWithReputation {
-  const existing = db
-    .prepare(`SELECT * FROM attestor_directory WHERE address = ?`)
-    .get(input.address) as AttestorRow | undefined;
-
+export async function registerAttestor(
+  input: RegisterAttestorInput,
+): Promise<AttestorWithReputation> {
   const now = new Date().toISOString();
 
-  if (existing) {
-    db.prepare(
-      `UPDATE attestor_directory 
-       SET name = ?, description = ?, coverage_area = ?, fee_bps = ?, active = 1, updated_at = ? 
-       WHERE id = ?`,
-    ).run(
-      input.name,
-      input.description ?? existing.description,
-      input.coverageArea ?? existing.coverage_area,
-      input.feeBps ?? existing.fee_bps,
-      now,
-      existing.id,
-    );
-
-    const updated = db
-      .prepare(`SELECT * FROM attestor_directory WHERE id = ?`)
-      .get(existing.id) as AttestorRow;
-    return formatAttestor(updated);
-  }
-
-  const id = randomUUID();
-  db.prepare(
-    `INSERT INTO attestor_directory (
+  // Optional fields bind as NULL and are COALESCEd, so an omitted field keeps
+  // the stored value on update while still defaulting on insert.
+  const result = await db.execute({
+    sql: `INSERT INTO attestor_directory (
       id, address, name, description, coverage_area, fee_bps, active, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    input.address,
-    input.name,
-    input.description ?? null,
-    input.coverageArea ?? null,
-    input.feeBps ?? 0,
-    1,
-    now,
-    now,
-  );
+    ) VALUES (
+      @id, @address, @name, @description, @coverage_area, COALESCE(@fee_bps, 0), 1, @now, @now
+    )
+    ON CONFLICT(address) DO UPDATE SET
+      name = @name,
+      description = COALESCE(@description, attestor_directory.description),
+      coverage_area = COALESCE(@coverage_area, attestor_directory.coverage_area),
+      fee_bps = COALESCE(@fee_bps, attestor_directory.fee_bps),
+      active = 1,
+      updated_at = @now
+    RETURNING *`,
+    args: {
+      id: randomUUID(),
+      address: input.address,
+      name: input.name,
+      description: input.description ?? null,
+      coverage_area: input.coverageArea ?? null,
+      fee_bps: input.feeBps ?? null,
+      now,
+    },
+  });
 
-  const row = db.prepare(`SELECT * FROM attestor_directory WHERE id = ?`).get(id) as AttestorRow;
-  return formatAttestor(row);
+  const row = result.rows[0] as unknown as AttestorRow;
+  return withReputation(row);
 }
 
 /**
  * Fetch registered attestor by directory ID
  */
-export function getAttestorById(id: string): AttestorWithReputation | undefined {
-  const row = db.prepare(`SELECT * FROM attestor_directory WHERE id = ?`).get(id) as
-    AttestorRow | undefined;
-  return row ? formatAttestor(row) : undefined;
+export async function getAttestorById(id: string): Promise<AttestorWithReputation | undefined> {
+  const result = await db.execute({
+    sql: `SELECT * FROM attestor_directory WHERE id = ?`,
+    args: [id],
+  });
+  const row = result.rows[0] as unknown as AttestorRow | undefined;
+  return row ? withReputation(row) : undefined;
 }
 
 /**
  * Fetch registered attestor by Stellar public key address
  */
-export function getAttestorByAddress(address: string): AttestorWithReputation | undefined {
-  const row = db.prepare(`SELECT * FROM attestor_directory WHERE address = ?`).get(address) as
-    AttestorRow | undefined;
-  return row ? formatAttestor(row) : undefined;
+export async function getAttestorByAddress(
+  address: string,
+): Promise<AttestorWithReputation | undefined> {
+  const result = await db.execute({
+    sql: `SELECT * FROM attestor_directory WHERE address = ?`,
+    args: [address],
+  });
+  const row = result.rows[0] as unknown as AttestorRow | undefined;
+  return row ? withReputation(row) : undefined;
 }
 
 /**
@@ -282,7 +312,7 @@ function sortValue(a: AttestorWithReputation, key: AttestorSortKey): number {
   }
 }
 
-export function listAttestors(filters?: {
+export async function listAttestors(filters?: {
   coverageArea?: string;
   activeOnly?: boolean;
   minScore?: number;
@@ -292,9 +322,9 @@ export function listAttestors(filters?: {
   minCompletedOrders?: number;
   sort?: AttestorSortKey;
   order?: "asc" | "desc";
-}): AttestorWithReputation[] {
+}): Promise<AttestorWithReputation[]> {
   let query = `SELECT * FROM attestor_directory WHERE 1=1`;
-  const params: unknown[] = [];
+  const params: string[] = [];
 
   if (filters?.activeOnly !== false) {
     query += ` AND active = 1`;
@@ -307,8 +337,13 @@ export function listAttestors(filters?: {
 
   query += ` ORDER BY created_at DESC`;
 
-  const rows = db.prepare(query).all(...params) as AttestorRow[];
-  let results = rows.map((r) => formatAttestor(r));
+  const queryResult = await db.execute({ sql: query, args: params });
+  const rows = queryResult.rows as unknown as AttestorRow[];
+
+  // Every row needs a score for filtering and sorting, so resolve them all in
+  // one query rather than one per attestor.
+  const reputations = await computeReputationForAddresses(rows.map((r) => r.address));
+  let results = rows.map((r) => formatAttestor(r, reputations.get(r.address)!));
 
   if (typeof filters?.minScore === "number") {
     results = results.filter((a) => a.reputation.reputationScore >= filters.minScore!);

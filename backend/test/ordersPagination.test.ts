@@ -118,10 +118,11 @@ describe("Orders Filtering & Keyset Pagination (Issue #73)", () => {
   ];
 
   beforeAll(async () => {
-    // Seed test orders
+    // Seed test orders. Awaited individually so a duplicate-key rejection is
+    // caught here rather than surfacing as an unhandled rejection.
     for (const order of seedOrders) {
       try {
-        insertOrder(order);
+        await insertOrder(order);
       } catch {
         // ignore if already seeded
       }

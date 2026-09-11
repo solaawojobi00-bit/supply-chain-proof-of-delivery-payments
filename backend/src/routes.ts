@@ -83,7 +83,7 @@ router.post(
     if (!parseResult.success) {
       throw new HttpError(400, formatZodError(parseResult.error));
     }
-    const registered = registerAttestor(parseResult.data);
+    const registered = await registerAttestor(parseResult.data);
     res.status(201).json(registered);
   }),
 );
@@ -107,7 +107,7 @@ router.get(
       minCompletedOrders,
     } = parseResult.data;
 
-    const attestors = listAttestors({
+    const attestors = await listAttestors({
       coverageArea,
       minScore,
       activeOnly: active !== undefined ? active === "true" : true,
@@ -125,7 +125,7 @@ router.get(
 router.get(
   "/attestors/:id",
   asyncHandler(async (req, res) => {
-    const attestor = getAttestorById(String(req.params.id));
+    const attestor = await getAttestorById(String(req.params.id));
     if (!attestor) {
       throw new HttpError(404, `Attestor ${req.params.id} not found`);
     }
@@ -234,7 +234,7 @@ router.post(
     });
 
     if (idempotencyKey) {
-      const existing = getOrderByIdempotencyKey(idempotencyKey);
+      const existing = await getOrderByIdempotencyKey(idempotencyKey);
       if (existing) {
         if (existing.request_payload && existing.request_payload !== normalizedPayload) {
           throw new HttpError(
@@ -302,7 +302,7 @@ router.get(
       throw new HttpError(400, formatZodError(parseResult.error));
     }
     const query = parseResult.data;
-    const result = getAllOrders(query);
+    const result = await getAllOrders(query);
     res.json({
       orders: result.orders.map(serialize),
       next_cursor: result.next_cursor,
@@ -331,7 +331,7 @@ router.post(
   mutatingRateLimiter,
   asyncHandler(async (req, res) => {
     const orderId = String(req.params.id);
-    const order = getOrderById(orderId);
+    const order = await getOrderById(orderId);
     verifyRole(req, order, "attestor");
 
     let attestorAddress: string | undefined;
@@ -358,7 +358,7 @@ router.post(
   mutatingRateLimiter,
   asyncHandler(async (req, res) => {
     const orderId = String(req.params.id);
-    const order = getOrderById(orderId);
+    const order = await getOrderById(orderId);
     verifyRole(req, order, "seller");
 
     if (isUnsignedRequested(req)) {
@@ -375,7 +375,7 @@ router.post(
   mutatingRateLimiter,
   asyncHandler(async (req, res) => {
     const orderId = String(req.params.id);
-    const order = getOrderById(orderId);
+    const order = await getOrderById(orderId);
     verifyRole(req, order, "buyer");
 
     if (isUnsignedRequested(req)) {
@@ -392,7 +392,7 @@ router.post(
   mutatingRateLimiter,
   asyncHandler(async (req, res) => {
     const orderId = String(req.params.id);
-    const order = getOrderById(orderId);
+    const order = await getOrderById(orderId);
     verifyRole(req, order, ["buyer", "seller"]);
 
     if (isUnsignedRequested(req)) {
@@ -413,7 +413,7 @@ router.post(
   mutatingRateLimiter,
   asyncHandler(async (req, res) => {
     const orderId = String(req.params.id);
-    const order = getOrderById(orderId);
+    const order = await getOrderById(orderId);
     verifyRole(req, order, "buyer");
 
     let evidenceHash: string | undefined;
@@ -443,7 +443,7 @@ router.post(
   mutatingRateLimiter,
   asyncHandler(async (req, res) => {
     const orderId = String(req.params.id);
-    const order = getOrderById(orderId);
+    const order = await getOrderById(orderId);
     verifyRole(req, order, "arbiter");
 
     const parseResult = resolveDisputeSchema.safeParse(req.body);
@@ -474,7 +474,7 @@ router.post(
   mutatingRateLimiter,
   asyncHandler(async (req, res) => {
     const orderId = String(req.params.id);
-    const order = getOrderById(orderId);
+    const order = await getOrderById(orderId);
 
     const parseResult = buildTxSchema.safeParse(req.body);
     if (!parseResult.success) {
@@ -525,7 +525,7 @@ router.post(
     }
     const orderId = parseResult.data.orderId ?? (req.params.id ? String(req.params.id) : undefined);
     if (orderId) {
-      const order = getOrderById(orderId);
+      const order = await getOrderById(orderId);
       const action = parseResult.data.action;
       if (action === "attest") {
         verifyRole(req, order, "attestor");

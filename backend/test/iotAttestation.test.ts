@@ -82,35 +82,45 @@ describe("GPS/IoT Automated Attestation Integration (Issue #18)", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  beforeEach(() => {
-    db.exec(`DELETE FROM orders`);
+  beforeEach(async () => {
+    await db.execute(`DELETE FROM orders`);
   });
 
-  function createTestOrder(id: string, overrides: Partial<Record<string, unknown>> = {}) {
+  interface TestOrderOverrides {
+    buyerAddress: string;
+    sellerAddress: string;
+    attestorAddress: string;
+    attestors: string[];
+    deadline: number;
+    status: string;
+  }
+
+  async function createTestOrder(id: string, overrides: Partial<TestOrderOverrides> = {}) {
     const defaultDeadline = Math.floor(Date.now() / 1000) + 3600;
-    db.prepare(
-      `INSERT INTO orders (
+    await db.execute({
+      sql: `INSERT INTO orders (
         id, contract_id, numeric_id, buyer_address, seller_address, attestor_address,
         attestors, threshold, confirmations, arbiter_address, token_contract_id,
         amount, deadline, status, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      id,
-      "C" + "0".repeat(55),
-      101,
-      overrides.buyerAddress || buyerKeypair.publicKey(),
-      overrides.sellerAddress || sellerKeypair.publicKey(),
-      overrides.attestorAddress || attestorKeypair.publicKey(),
-      JSON.stringify(overrides.attestors || [attestorKeypair.publicKey()]),
-      1,
-      null,
-      null,
-      "C" + "0".repeat(55),
-      "10000000",
-      overrides.deadline !== undefined ? overrides.deadline : defaultDeadline,
-      overrides.status || "Created",
-      new Date().toISOString(),
-    );
+      args: [
+        id,
+        "C" + "0".repeat(55),
+        101,
+        overrides.buyerAddress || buyerKeypair.publicKey(),
+        overrides.sellerAddress || sellerKeypair.publicKey(),
+        overrides.attestorAddress || attestorKeypair.publicKey(),
+        JSON.stringify(overrides.attestors || [attestorKeypair.publicKey()]),
+        1,
+        null,
+        null,
+        "C" + "0".repeat(55),
+        "10000000",
+        overrides.deadline !== undefined ? overrides.deadline : defaultDeadline,
+        overrides.status || "Created",
+        new Date().toISOString(),
+      ],
+    });
   }
 
   describe("Haversine Distance & Signature Verification Functions", () => {
@@ -160,7 +170,7 @@ describe("GPS/IoT Automated Attestation Integration (Issue #18)", () => {
 
     it("processIoTTelemetryEvent executes end-to-end direct programmatic invocation", async () => {
       const testOrderId = "660e8400-e29b-41d4-a716-446655440000";
-      createTestOrder(testOrderId);
+      await createTestOrder(testOrderId);
 
       const result = await processIoTTelemetryEvent(
         {
@@ -183,7 +193,7 @@ describe("GPS/IoT Automated Attestation Integration (Issue #18)", () => {
     const testOrderId = "550e8400-e29b-41d4-a716-446655440000";
 
     it("successfully confirms delivery when receiving a valid GPS geofence arrival event with HMAC signature", async () => {
-      createTestOrder(testOrderId);
+      await createTestOrder(testOrderId);
 
       const payload = {
         orderId: testOrderId,
@@ -218,13 +228,15 @@ describe("GPS/IoT Automated Attestation Integration (Issue #18)", () => {
       expect(data.order.status).toBe("Attested");
 
       // Verify DB order updated to Attested
-      const updatedOrder = db.prepare(`SELECT * FROM orders WHERE id = ?`).get(testOrderId) as any;
+      const updatedOrder = (
+        await db.execute({ sql: `SELECT * FROM orders WHERE id = ?`, args: [testOrderId] })
+      ).rows[0] as any;
       expect(updatedOrder.status).toBe("Attested");
       expect(updatedOrder.attest_tx_hash).toBe("mock-iot-attest-hash");
     });
 
     it("successfully confirms delivery with shared-secret token and RFID scan event", async () => {
-      createTestOrder(testOrderId);
+      await createTestOrder(testOrderId);
 
       const payload = {
         orderId: testOrderId,
@@ -251,7 +263,7 @@ describe("GPS/IoT Automated Attestation Integration (Issue #18)", () => {
     });
 
     it("rejects unauthenticated requests with 401 Unauthorized", async () => {
-      createTestOrder(testOrderId);
+      await createTestOrder(testOrderId);
 
       const payload = {
         orderId: testOrderId,
@@ -275,7 +287,7 @@ describe("GPS/IoT Automated Attestation Integration (Issue #18)", () => {
     });
 
     it("rejects geofence events when device is outside allowed radius with 422 Unprocessable Entity", async () => {
-      createTestOrder(testOrderId);
+      await createTestOrder(testOrderId);
 
       const payload = {
         orderId: testOrderId,
@@ -305,7 +317,7 @@ describe("GPS/IoT Automated Attestation Integration (Issue #18)", () => {
     });
 
     it("returns 400 when geofence_entry is missing coordinates", async () => {
-      createTestOrder(testOrderId);
+      await createTestOrder(testOrderId);
 
       const payload = {
         orderId: testOrderId,
@@ -349,7 +361,7 @@ describe("GPS/IoT Automated Attestation Integration (Issue #18)", () => {
     });
 
     it("returns 409 when order is already in Claimed or Attested state", async () => {
-      createTestOrder(testOrderId, { status: "Claimed" });
+      await createTestOrder(testOrderId, { status: "Claimed" });
 
       const payload = {
         orderId: testOrderId,

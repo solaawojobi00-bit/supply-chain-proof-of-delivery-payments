@@ -82,9 +82,9 @@ describe("Attestor Reputation & Discovery Subsystem (Issue #17)", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  beforeEach(() => {
-    db.exec(`DELETE FROM attestor_directory`);
-    db.exec(`DELETE FROM orders`);
+  beforeEach(async () => {
+    await db.execute(`DELETE FROM attestor_directory`);
+    await db.execute(`DELETE FROM orders`);
   });
 
   describe("Attestor Registration & Profile Management", () => {
@@ -139,7 +139,7 @@ describe("Attestor Reputation & Discovery Subsystem (Issue #17)", () => {
     });
 
     it("updates existing registration when the same address registers again", async () => {
-      registerAttestor({
+      await registerAttestor({
         address: testAttestorAddress,
         name: "Original Name",
         feeBps: 10,
@@ -162,19 +162,19 @@ describe("Attestor Reputation & Discovery Subsystem (Issue #17)", () => {
       expect(updated.coverageArea).toBe("Global");
       expect(updated.feeBps).toBe(50);
 
-      const all = listAttestors();
+      const all = await listAttestors();
       expect(all).toHaveLength(1);
 
-      const byId = getAttestorById(all[0].id);
+      const byId = await getAttestorById(all[0].id);
       expect(byId?.name).toBe("Updated Logistics Inc.");
 
-      const byAddr = getAttestorByAddress(testAttestorAddress);
+      const byAddr = await getAttestorByAddress(testAttestorAddress);
       expect(byAddr?.id).toBe(all[0].id);
 
-      const notFoundId = getAttestorById("non-existent-id");
+      const notFoundId = await getAttestorById("non-existent-id");
       expect(notFoundId).toBeUndefined();
 
-      const notFoundAddr = getAttestorByAddress(
+      const notFoundAddr = await getAttestorByAddress(
         "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
       );
       expect(notFoundAddr).toBeUndefined();
@@ -182,21 +182,92 @@ describe("Attestor Reputation & Discovery Subsystem (Issue #17)", () => {
   });
 
   describe("Dynamic Reputation Computation from Real Order History", () => {
-    it("computes reputation metrics dynamically based on Claimed, Reclaimed, and Disputed orders", () => {
+    it("computes reputation metrics dynamically based on Claimed, Reclaimed, and Disputed orders", async () => {
       // 1. Insert 3 successful claimed orders
       for (let i = 1; i <= 3; i++) {
-        db.prepare(
-          `INSERT INTO orders (
+        await db.execute({
+          sql: `INSERT INTO orders (
             id, contract_id, numeric_id, buyer_address, seller_address, attestor_address,
             attestors, threshold, confirmations, arbiter_address,
             token_contract_id, amount, deadline, status,
             create_tx_hash, attest_tx_hash, claim_tx_hash, reclaim_tx_hash, cancel_tx_hash,
             dispute_tx_hash, resolve_tx_hash, created_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(
-          `order-success-${i}`,
-          `C-mock-contract-${i}`,
-          100 + i,
+          args: [
+            `order-success-${i}`,
+            `C-mock-contract-${i}`,
+            100 + i,
+            buyerKeypair.publicKey(),
+            sellerKeypair.publicKey(),
+            testAttestorAddress,
+            JSON.stringify([testAttestorAddress]),
+            1,
+            JSON.stringify([testAttestorAddress]),
+            null,
+            "CTOKEN",
+            "10000000",
+            Math.floor(Date.now() / 1000) + 3600,
+            "Claimed",
+            "tx-create",
+            "tx-attest",
+            "tx-claim",
+            null,
+            null,
+            null,
+            null,
+            new Date().toISOString(),
+          ],
+        });
+      }
+
+      // 2. Insert 1 expired reclaimed order
+      await db.execute({
+        sql: `INSERT INTO orders (
+          id, contract_id, numeric_id, buyer_address, seller_address, attestor_address,
+          attestors, threshold, confirmations, arbiter_address,
+          token_contract_id, amount, deadline, status,
+          create_tx_hash, attest_tx_hash, claim_tx_hash, reclaim_tx_hash, cancel_tx_hash,
+          dispute_tx_hash, resolve_tx_hash, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          "order-expired-1",
+          "C-mock-contract-expired",
+          104,
+          buyerKeypair.publicKey(),
+          sellerKeypair.publicKey(),
+          testAttestorAddress,
+          JSON.stringify([testAttestorAddress]),
+          1,
+          JSON.stringify([]),
+          null,
+          "CTOKEN",
+          "10000000",
+          Math.floor(Date.now() / 1000) - 100,
+          "Reclaimed",
+          "tx-create",
+          null,
+          null,
+          "tx-reclaim",
+          null,
+          null,
+          null,
+          new Date().toISOString(),
+        ],
+      });
+
+      // 3. Insert 1 disputed order
+      await db.execute({
+        sql: `INSERT INTO orders (
+          id, contract_id, numeric_id, buyer_address, seller_address, attestor_address,
+          attestors, threshold, confirmations, arbiter_address,
+          token_contract_id, amount, deadline, status,
+          create_tx_hash, attest_tx_hash, claim_tx_hash, reclaim_tx_hash, cancel_tx_hash,
+          dispute_tx_hash, resolve_tx_hash, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          "order-disputed-1",
+          "C-mock-contract-disputed",
+          105,
           buyerKeypair.publicKey(),
           sellerKeypair.publicKey(),
           testAttestorAddress,
@@ -207,87 +278,19 @@ describe("Attestor Reputation & Discovery Subsystem (Issue #17)", () => {
           "CTOKEN",
           "10000000",
           Math.floor(Date.now() / 1000) + 3600,
-          "Claimed",
+          "Disputed",
           "tx-create",
           "tx-attest",
-          "tx-claim",
           null,
           null,
           null,
+          "tx-dispute",
           null,
           new Date().toISOString(),
-        );
-      }
+        ],
+      });
 
-      // 2. Insert 1 expired reclaimed order
-      db.prepare(
-        `INSERT INTO orders (
-          id, contract_id, numeric_id, buyer_address, seller_address, attestor_address,
-          attestors, threshold, confirmations, arbiter_address,
-          token_contract_id, amount, deadline, status,
-          create_tx_hash, attest_tx_hash, claim_tx_hash, reclaim_tx_hash, cancel_tx_hash,
-          dispute_tx_hash, resolve_tx_hash, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        "order-expired-1",
-        "C-mock-contract-expired",
-        104,
-        buyerKeypair.publicKey(),
-        sellerKeypair.publicKey(),
-        testAttestorAddress,
-        JSON.stringify([testAttestorAddress]),
-        1,
-        JSON.stringify([]),
-        null,
-        "CTOKEN",
-        "10000000",
-        Math.floor(Date.now() / 1000) - 100,
-        "Reclaimed",
-        "tx-create",
-        null,
-        null,
-        "tx-reclaim",
-        null,
-        null,
-        null,
-        new Date().toISOString(),
-      );
-
-      // 3. Insert 1 disputed order
-      db.prepare(
-        `INSERT INTO orders (
-          id, contract_id, numeric_id, buyer_address, seller_address, attestor_address,
-          attestors, threshold, confirmations, arbiter_address,
-          token_contract_id, amount, deadline, status,
-          create_tx_hash, attest_tx_hash, claim_tx_hash, reclaim_tx_hash, cancel_tx_hash,
-          dispute_tx_hash, resolve_tx_hash, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        "order-disputed-1",
-        "C-mock-contract-disputed",
-        105,
-        buyerKeypair.publicKey(),
-        sellerKeypair.publicKey(),
-        testAttestorAddress,
-        JSON.stringify([testAttestorAddress]),
-        1,
-        JSON.stringify([testAttestorAddress]),
-        null,
-        "CTOKEN",
-        "10000000",
-        Math.floor(Date.now() / 1000) + 3600,
-        "Disputed",
-        "tx-create",
-        "tx-attest",
-        null,
-        null,
-        null,
-        "tx-dispute",
-        null,
-        new Date().toISOString(),
-      );
-
-      const rep = computeReputationForAddress(testAttestorAddress);
+      const rep = await computeReputationForAddress(testAttestorAddress);
       expect(rep.totalAssigned).toBe(5);
       expect(rep.totalAttested).toBe(4);
       expect(rep.successfulClaims).toBe(3);
@@ -302,14 +305,14 @@ describe("Attestor Reputation & Discovery Subsystem (Issue #17)", () => {
 
   describe("Directory Discovery & Listing Endpoints", () => {
     it("GET /attestors returns list sorted by reputation score and supports coverage area filter", async () => {
-      registerAttestor({
+      await registerAttestor({
         address: testAttestorAddress,
         name: "North America Carrier",
         coverageArea: "North America",
         feeBps: 20,
       });
 
-      registerAttestor({
+      await registerAttestor({
         address: secondaryAttestorAddress,
         name: "Asia Pacific Express",
         coverageArea: "APAC",
@@ -329,7 +332,7 @@ describe("Attestor Reputation & Discovery Subsystem (Issue #17)", () => {
     });
 
     it("GET /attestors/:id returns single attestor profile and 404 for unknown id", async () => {
-      const created = registerAttestor({
+      const created = await registerAttestor({
         address: testAttestorAddress,
         name: "Express Verifier",
       });
@@ -347,7 +350,7 @@ describe("Attestor Reputation & Discovery Subsystem (Issue #17)", () => {
 
   describe("Order Creation with attestorId", () => {
     it("POST /orders accepts attestorId and resolves address from directory", async () => {
-      const registered = registerAttestor({
+      const registered = await registerAttestor({
         address: testAttestorAddress,
         name: "Directory Registered Attestor",
       });

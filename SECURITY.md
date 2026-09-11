@@ -15,6 +15,12 @@ Only the current Phase 1 implementation on the `main` branch is actively support
 - **Environment Configuration**: Real secrets belong exclusively in untracked `.env` files (which are gitignored). Only placeholder templates (such as `backend/.env.example`) should appear in version control.
 - **Automated Scanning**: All pull requests and pushes to `main` are continuously scanned for secret leaks via Gitleaks CI (`.github/workflows/gitleaks.yml`).
 
+## Deployment Posture
+
+- **Testnet Pinning**: Because the backend holds server-side signing keys (a Phase 1 simplification — see [ARCHITECTURE.md](ARCHITECTURE.md)), any hosted instance must set `REQUIRE_TESTNET=true`. The server refuses to start if `STELLAR_NETWORK` is anything other than `testnet`, which bounds the impact of a leaked key to worthless testnet funds. Deployed keypairs should be generated fresh and never reused elsewhere.
+- **Rate Limiting Is Per-Instance**: `express-rate-limit` uses an in-process memory store. This is accurate on a single instance, which is how the service is currently deployed, but counters are not shared across replicas. Scaling horizontally requires moving to a shared store (e.g. Redis) before the limits documented in the README hold.
+- **Insecure Fallback Defaults**: `WEBHOOK_SIGNING_SECRET` (unsigned deliveries when unset), `IOT_WEBHOOK_SECRET` (falls back to a known literal), and the five `*_API_KEY` role tokens (fall back to `demo-*-token`) must all be set explicitly on any hosted instance.
+
 ## Reporting a Vulnerability
 
 Because this project interfaces with an escrow smart contract that holds and manages funds on the Stellar Testnet, please **do NOT** report security vulnerabilities through public GitHub issues or discussions.

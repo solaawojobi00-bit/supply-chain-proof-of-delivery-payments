@@ -23,3 +23,8 @@ if (!process.env.SELLER_SECRET_KEY) {
 if (!process.env.ATTESTOR_SECRET_KEY) {
   process.env.ATTESTOR_SECRET_KEY = Keypair.random().secret();
 }
+
+// Imported after the env above is in place, since config resolves at module load.
+// Each Vitest file gets its own worker, so this is a fresh in-memory database.
+const { initSchema } = await import("../src/db.js");
+await initSchema();
